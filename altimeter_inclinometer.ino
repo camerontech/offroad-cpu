@@ -1,3 +1,5 @@
+const bool DEBUG = true;
+
 unsigned long millisCounter = 0;
 
 // Menu and display modes
@@ -19,15 +21,59 @@ int displayMenuItem = 0;
 // Display in (m)etric or (i)mperial
 char unit = 'i';
 
+
 /////////////////////
 // Three-way button
 /////////////////////
-const int UP = 11;
-const int PUSH = 12;
-const int DOWN = 13;
+const int UP = 10;
+const int PUSH = 11;
+const int DOWN = 12;
 
 int lastState = 0;
 int buttonState = 0;
+
+
+//////////////////////
+// Altimeter
+//////////////////////
+
+// analog input pins
+const int X_PIN = A0;
+const int Y_PIN = A1;
+const int Z_PIN = A2;
+
+// max/min analog values
+
+// Duemilanove
+// xMax:753 xMin:234 yMax:784 yMin:266 zMax:743 zMin:221
+// const int X_MIN = 234;
+// const int X_MAX = 753;
+// const int Y_MIN = 266;
+// const int Y_MAX = 784;
+// const int Z_MIN = 221;
+// const int Z_MAX = 743;
+
+// Leonardo
+// xMax:732 xMin:239 yMax:775 yMin:271 zMax:732 zMin:238
+const int X_MIN = 284;
+const int X_MAX = 778;
+const int Y_MIN = 308;
+const int Y_MAX = 815;
+const int Z_MIN = 247;
+const int Z_MAX = 753;
+
+// Uno
+// xMax:835 xMin:341 yMax:843 yMin:337 zMax:719 zMin:209
+// const int X_MIN = 341;
+// const int X_MAX = 835;
+// const int Y_MIN = 337;
+// const int Y_MAX = 843;
+// const int Z_MIN = 209;
+// const int Z_MAX = 719;
+
+// ASCII character for degree symbol
+const int DEGREE = 223;
+
 
 //////////////////////
 // Barometer
@@ -104,8 +150,9 @@ void loop() {
 ////////////
 
 void setupDisplay() {
-  Serial.println("Setting up display...");
+  Serial.println("CameronTech Altimeter & Inclinometer");
 
+  delay(2000);
 }
 
 void setupButton() {
@@ -218,6 +265,43 @@ void loopInclinometer() {
   if (millis() - millisCounter > 250) {
     Serial.println("Inclinometer loop...");
 
+    // sample the voltages
+    delay(10);
+    int x = analogRead(X_PIN);
+    delay(10);
+    int y = analogRead(Y_PIN);
+    delay(10);
+    int z = analogRead(Z_PIN);
+
+    if (DEBUG) {
+      Serial.print(" x");
+      Serial.print(x);
+      Serial.print(" y");
+      Serial.print(y);
+      Serial.print(" z");
+      Serial.println(z);
+    }
+
+    // convert to range of -90 to +90 degrees
+    int xAng = map(x, X_MIN, X_MAX, -90, 90);
+    int yAng = map(y, Y_MIN, Y_MAX, -90, 90);
+    int zAng = map(z, Z_MIN, Z_MAX, -90, 90);
+
+    // convert radians to degrees
+    int pitch = -(RAD_TO_DEG * (atan2(-yAng, -zAng) + PI));
+    int roll = RAD_TO_DEG * (atan2(-xAng, -zAng) + PI);
+
+    // convert left roll and forward pitch to negative degrees
+    if (pitch < -180) {
+      pitch = pitch + 360;
+    }
+    if (roll > 180) {
+      roll = roll - 360;
+    }
+
+    // write the pitch and roll to the second line
+    displayIncline(pitch, roll);
+
     resetCounter();
   }
 }
@@ -276,10 +360,13 @@ void loopBrightness() {
 //////////////////////////////
 // Custom functions
 //////////////////////////////
+
+// Resets the millisecond counter
 void resetCounter() {
   millisCounter = millis();
 }
 
+// Zeros out the tracking altitude
 void resetTrackingAltitude() {
   Serial.println("Resetting tracking altitude.");
   trackingAltitudeOffset = getAltitude(0);
@@ -287,6 +374,7 @@ void resetTrackingAltitude() {
   Serial.println(trackingAltitudeOffset);
 }
 
+// Swaps between metric/imperial measurements
 void switchUnit() {
   Serial.println("Switching units.");
   if (unit == 'i') {
@@ -296,6 +384,16 @@ void switchUnit() {
   }
 }
 
+// Writes the current pitch/roll to the screen
+void displayIncline(int first, int second) {
+  Serial.print("Pitch: ");
+  Serial.print(second);
+
+  Serial.print(" Roll: ");
+  Serial.println(first);
+}
+
+// Gets the current altitude
 float getAltitude(float offset) {
   temperature = bmp085GetTemperature(bmp085ReadUT());
   pressure = bmp085GetPressure(bmp085ReadUP());
@@ -305,6 +403,7 @@ float getAltitude(float offset) {
   return altitude;
 }
 
+// Gets altitude with or without any offset
 void outputAltitude(bool offset) {
   Serial.println("Altimeter loop...");
 
@@ -313,6 +412,7 @@ void outputAltitude(bool offset) {
   displayAltitudeWithUnit(altitude);
 }
 
+// Write the current altitude to the screen
 void displayAltitudeWithUnit(float altitude) {
   if (unit == 'i') {
     Serial.print(altitude * 3.28084, 0);
@@ -323,14 +423,17 @@ void displayAltitudeWithUnit(float altitude) {
   }
 }
 
+// Increments the altitude calibration offset
 void incrementAltimeterCalibration() {
   calibrateAltitudeDisplay++;
 }
 
+// Decrements the altitude calibration offset
 void decrementAltimeterCalibration() {
   calibrateAltitudeDisplay--;
 }
 
+// Save the calibration offset
 void saveCalibration() {
   calibrateAltitudeOffset = calibrateAltitudeDisplay - getAltitude(0);
 }
