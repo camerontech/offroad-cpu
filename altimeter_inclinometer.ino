@@ -1,3 +1,7 @@
+#include <SoftwareSerial.h>
+
+SoftwareSerial lcd(3,2);
+
 const bool DEBUG = true;
 
 unsigned long millisCounter = 0;
@@ -55,21 +59,21 @@ const int Z_PIN = A2;
 
 // Leonardo
 // xMax:732 xMin:239 yMax:775 yMin:271 zMax:732 zMin:238
-const int X_MIN = 284;
-const int X_MAX = 778;
-const int Y_MIN = 308;
-const int Y_MAX = 815;
-const int Z_MIN = 247;
-const int Z_MAX = 753;
+// const int X_MIN = 284;
+// const int X_MAX = 778;
+// const int Y_MIN = 308;
+// const int Y_MAX = 815;
+// const int Z_MIN = 247;
+// const int Z_MAX = 753;
 
 // Uno
 // xMax:835 xMin:341 yMax:843 yMin:337 zMax:719 zMin:209
-// const int X_MIN = 341;
-// const int X_MAX = 835;
-// const int Y_MIN = 337;
-// const int Y_MAX = 843;
-// const int Z_MIN = 209;
-// const int Z_MAX = 719;
+const int X_MIN = 341;
+const int X_MAX = 835;
+const int Y_MIN = 337;
+const int Y_MAX = 843;
+const int Z_MIN = 209;
+const int Z_MAX = 719;
 
 // ASCII character for degree symbol
 const int DEGREE = 223;
@@ -150,9 +154,20 @@ void loop() {
 ////////////
 
 void setupDisplay() {
-  Serial.println("CameronTech Altimeter & Inclinometer");
+  lcd.begin(9600);
 
-  delay(2000);
+  lcd.write(124);
+  lcd.write(157);
+
+  delay(100);
+
+  clearDisplay();
+  moveToFirstLine();
+
+  lcd.write(" CameronTech.io ");
+  lcd.write("  Inclinometer  ");
+
+  delay(1000);
 }
 
 void setupButton() {
@@ -253,6 +268,10 @@ void buttonClick() {
 
 void loopMenu() {
   if (millis() - millisCounter > 250) {
+    moveToFirstLine();
+    lcd.print(menuText[displayMenuItem][0]);
+    lcd.print(menuText[displayMenuItem][1]);
+
     Serial.println("------Menu------");
     Serial.println(menuText[displayMenuItem][0]);
     Serial.println(menuText[displayMenuItem][1]);
@@ -300,7 +319,7 @@ void loopInclinometer() {
     }
 
     // write the pitch and roll to the second line
-    displayIncline(pitch, roll);
+    displayIncline(roll, pitch);
 
     resetCounter();
   }
@@ -308,6 +327,10 @@ void loopInclinometer() {
 
 void loopAltimeter() {
   if (millis() - millisCounter > 1000) {
+    Serial.println("Altimeter loop...");
+
+    moveToFirstLine();
+    lcd.print("    Altitude    ");
     outputAltitude(false);
 
     resetCounter();
@@ -316,6 +339,8 @@ void loopAltimeter() {
 
 void loopTrack() {
   if (millis() - millisCounter > 1000) {
+    moveToFirstLine();
+    lcd.print(" Track Altitude ");
     outputAltitude(true);
 
     resetCounter();
@@ -324,6 +349,8 @@ void loopTrack() {
 
 void loopCalibrate() {
   if (millis() - millisCounter > 250) {
+    moveToFirstLine();
+    lcd.print("Current Altitude");
     if (calibrateAltitudeDisplay == 0) {
       calibrateAltitudeDisplay = getAltitude(0);
     }
@@ -350,6 +377,22 @@ void loopBrightness() {
 
 
 
+
+void clearDisplay() {
+  moveToFirstLine();
+  lcd.write("                ");
+  lcd.write("                ");
+}
+
+void moveToFirstLine() {
+  lcd.write(254);
+  lcd.write(128);
+}
+
+void moveToSecondLine() {
+  lcd.write(254);
+  lcd.write(192);
+}
 
 
 
@@ -386,11 +429,54 @@ void switchUnit() {
 
 // Writes the current pitch/roll to the screen
 void displayIncline(int first, int second) {
-  Serial.print("Pitch: ");
-  Serial.print(second);
+  // Move to the start of the second line
+  moveToFirstLine();
+  lcd.print("  Pitch   Roll  ");
 
-  Serial.print(" Roll: ");
-  Serial.println(first);
+  // convert int values to strings for output
+  String firstString = String(first);
+  String secondString = String(second);
+
+  // pad spaces before pitch value
+  String output = "  ";
+  if (firstString.length() < 4) {
+    output += " ";
+  }
+  if (firstString.length() == 1) {
+    output += " ";
+  }
+  output += firstString;
+
+  // write pitch value
+  lcd.print(output);
+  lcd.write(DEGREE);
+
+  int outputLength = output.length() + 1;
+
+  // pad spaces before pitch value
+  output = "";
+  for (int i=outputLength; i<10; i++) {
+    output += " ";
+  }
+  if (firstString.length() < 3) {
+    output += " ";
+  }
+  if (secondString.length() == 1) {
+    output += " ";
+  }
+  output += secondString;
+
+  // pad spaces before roll value
+  lcd.print(output);
+  lcd.write(DEGREE);
+
+  outputLength += output.length() + 1;
+
+  // fill the rest of the line with blanks
+  for (int i=outputLength; i<16; i++) {
+    lcd.print(" ");
+  }
+
 }
 
 // Gets the current altitude
@@ -405,8 +491,6 @@ float getAltitude(float offset) {
 
 // Gets altitude with or without any offset
 void outputAltitude(bool offset) {
-  Serial.println("Altimeter loop...");
-
   float altitude = getAltitude(offset ? trackingAltitudeOffset : 0);
 
   displayAltitudeWithUnit(altitude);
@@ -414,12 +498,30 @@ void outputAltitude(bool offset) {
 
 // Write the current altitude to the screen
 void displayAltitudeWithUnit(float altitude) {
+  Serial.println("displayAltitudeWithUnit()");
+
+  String altString = String(int(altitude));
+
+  for (int i=0;i<4;i++) {
+    lcd.print(" ");
+  }
+
   if (unit == 'i') {
+    lcd.print(altitude * 3.28084, 0);
+    lcd.print(" ft");
+
     Serial.print(altitude * 3.28084, 0);
     Serial.println("ft");
   } else {
+    lcd.print(altitude, 1);
+    lcd.println(" m");
+
     Serial.print(altitude, 1);
     Serial.println("m");
+  }
+
+  for (int i=0;i<4;i++) {
+    lcd.print(" ");
   }
 }
 
