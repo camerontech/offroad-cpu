@@ -13,31 +13,41 @@ const String menuText[][2] = {{"    Incline     ","                "},
                               {"     Track      ","    Altitude    "},
                               {"    Min/Max     ","    Altitude    "},
                               {"   Calibrate    ","   Altimeter    "},
+                              {"  Temperature   ","                "},
                               {"      Set       ","   Brightness   "}};
-const int MENU_LENGTH = 6;
-const int INCLINE = 0;
-const int ALTITUDE = 1;
-const int TRACK = 2;
-const int MINMAX = 3;
-const int CALIBRATE = 4;
-const int BRIGHTNESS = 5;
-const int MENU = 6;
-int mode = INCLINE;
+const unsigned int MENU_LENGTH = 7;
+const unsigned int INCLINE = 0;
+const unsigned int ALTITUDE = 1;
+const unsigned int TRACK = 2;
+const unsigned int MINMAX = 3;
+const unsigned int CALIBRATE = 4;
+const unsigned int TEMPERATURE = 5;
+const unsigned int BRIGHTNESS = 6;
+const unsigned int MENU = 7;
+// Start on the incline view
+unsigned int mode = INCLINE;
 int displayMenuItem = 0;
 
 // Display in (m)etric or (i)mperial
 char unit = 'i';
 
+// Display character for brightness meter
+const unsigned int BLOCK_CHAR = 255;
+const unsigned int MAX_BRIGHTNESS = 157;
+const unsigned int MIN_BRIGHTNESS = 128;
+const unsigned int BRIGHTNESS_INCREMENT = 7;
+int unsigned brightness;
+
 
 /////////////////////
 // Three-way button
 /////////////////////
-const int UP = 10;
-const int PUSH = 11;
-const int DOWN = 12;
+const unsigned int UP = 10;
+const unsigned int PUSH = 11;
+const unsigned int DOWN = 12;
 
-int lastState = 0;
-int buttonState = 0;
+int unsigned lastState = 0;
+int unsigned buttonState = 0;
 
 
 //////////////////////
@@ -45,9 +55,9 @@ int buttonState = 0;
 //////////////////////
 
 // analog input pins
-const int X_PIN = A0;
-const int Y_PIN = A1;
-const int Z_PIN = A2;
+const unsigned int X_PIN = A0;
+const unsigned int Y_PIN = A1;
+const unsigned int Z_PIN = A2;
 
 // max/min analog values
 
@@ -71,15 +81,15 @@ const int Z_PIN = A2;
 
 // Uno
 // xMax:835 xMin:341 yMax:843 yMin:337 zMax:719 zMin:209
-const int X_MIN = 341;
-const int X_MAX = 835;
-const int Y_MIN = 337;
-const int Y_MAX = 843;
-const int Z_MIN = 209;
-const int Z_MAX = 719;
+const unsigned int X_MIN = 341;
+const unsigned int X_MAX = 835;
+const unsigned int Y_MIN = 337;
+const unsigned int Y_MAX = 843;
+const unsigned int Z_MIN = 209;
+const unsigned int Z_MAX = 719;
 
 // ASCII character for degree symbol
-const int DEGREE = 223;
+const unsigned int DEGREE_CHAR = 223;
 
 
 //////////////////////
@@ -118,7 +128,7 @@ float altitude;
 
 // User-defined offset based some something like GPS readings
 float calibrateAltitudeOffset = 0;
-int   calibrateAltitudeDisplay = 0;
+float calibrateAltitudeDisplay = 0;
 
 // When user wants to track altitude change we start with the current altitude
 float trackingAltitudeOffset = 0;
@@ -126,6 +136,9 @@ float trackingAltitudeOffset = 0;
 // Keep track of minimum and maximum altitude
 float minAltitude;
 float maxAltitude;
+
+// convert from meters to feet
+float metersToFeet = 3.28084;
 
 
 void setup() {
@@ -152,6 +165,8 @@ void loop() {
     loopMinMax();
   } else if (mode == CALIBRATE) {
     loopCalibrate();
+  } else if (mode == TEMPERATURE) {
+    loopTemperature();
   } else if (mode == BRIGHTNESS) {
     loopBrightness();
   } else if (mode == MENU) {
@@ -167,10 +182,9 @@ void loop() {
 void setupDisplay() {
   lcd.begin(9600);
 
-  lcd.write(124);
-  lcd.write(157);
-
-  delay(100);
+  // set brightness
+  brightness = MAX_BRIGHTNESS;
+  setBrightness();
 
   clearDisplay();
   moveToFirstLine();
@@ -180,6 +194,7 @@ void setupDisplay() {
 
   delay(1000);
 }
+
 
 void setupButton() {
   Serial.println("Setting up button...");
@@ -194,10 +209,12 @@ void setupButton() {
   digitalWrite(DOWN, HIGH);
 }
 
+
 void setupAccelerometer() {
   Serial.println("Setting up altimeter...");
 
 }
+
 
 void setupBarometer() {
   Serial.println("Setting up barometer...");
@@ -207,6 +224,7 @@ void setupBarometer() {
   minAltitude = getAltitude(0);
   maxAltitude = minAltitude;
 }
+
 
 void buttonCheck() {
   // Serial.println("Checking for button press...");
@@ -258,7 +276,16 @@ void buttonClick() {
         decrementAltimeterCalibration();
       } else if (buttonState == PUSH) {
         saveCalibration();
+        displayMenuItem = ALTITUDE;
         mode = ALTITUDE;
+      }
+    } else if (mode == BRIGHTNESS) { // when in brightness mode, up/down changes brightness, push goes back to menu
+      if (buttonState == UP) {
+        increaseBrightness();
+      } else if (buttonState == DOWN) {
+        decreaseBrightness();
+      } else {
+        mode = MENU;
       }
     } else {                  // when not in calibrate mode, up/down goes to menu, push is optional function
       if (buttonState == UP || buttonState == DOWN) {        // Button pressed up or down to go into the menu
@@ -266,7 +293,7 @@ void buttonClick() {
       } else if (mode == TRACK && buttonState == PUSH) {     // Button clicked while tracking altitude
         // Reset tracking altitude
         resetTrackingAltitude();
-      } else if (mode == ALTITUDE && buttonState == PUSH) { // Button clicked on altimeter
+      } else if (mode == ALTITUDE || mode == TEMPERATURE && buttonState == PUSH) { // Button clicked on altimeter
         // Switch between meters and feet
         switchUnit();
       }
@@ -299,11 +326,11 @@ void loopInclinometer() {
 
     // sample the voltages
     delay(10);
-    int x = analogRead(X_PIN);
+    int unsigned x = analogRead(X_PIN);
     delay(10);
-    int y = analogRead(Y_PIN);
+    int unsigned y = analogRead(Y_PIN);
     delay(10);
-    int z = analogRead(Z_PIN);
+    int unsigned z = analogRead(Z_PIN);
 
     if (DEBUG) {
       Serial.print(" x");
@@ -381,9 +408,33 @@ void loopCalibrate() {
     if (calibrateAltitudeDisplay == 0) {
       calibrateAltitudeDisplay = getAltitude(0);
     }
-    Serial.println("Current Altitude");
-    Serial.print("      ");
+    lcd.print("    ");
+    // Serial.println("Current Altitude");
+    // Serial.print("      ");
     displayAltitudeWithUnit(calibrateAltitudeDisplay);
+    lcd.print("    ");
+    resetCounter();
+  }
+}
+
+void loopTemperature() {
+  if (millis() - millisCounter > 1000) {
+    moveToFirstLine();
+    lcd.print("  Temperature   ");
+    temperature = bmp085GetTemperature(bmp085ReadUT());
+
+    lcd.print("     ");
+
+    if (unit == 'i') {
+      lcd.print(temperature*0.18+32,1);
+      lcd.write(DEGREE_CHAR);
+      lcd.write("F");
+    } else {
+      lcd.print(temperature/10.0,1);
+      lcd.write(DEGREE_CHAR);
+      lcd.write("C");
+    }
+    lcd.print("      ");
     resetCounter();
   }
 }
@@ -392,6 +443,15 @@ void loopBrightness() {
   if (millis() - millisCounter > 250) {
     Serial.println("Brightness loop...");
 
+    moveToFirstLine();
+    lcd.print("   Brightness   ");
+    int unsigned dots = map(brightness, 128, 157, 1, 16);
+    for (int i=0; i<dots; i++) {
+      lcd.write(BLOCK_CHAR);
+    }
+    for (int i=0; i<16-dots; i++) {
+      lcd.write(" ");
+    }
     resetCounter();
   }
 }
@@ -446,6 +506,34 @@ void updateMinMaxAltitude() {
   }
 }
 
+void increaseBrightness() {
+  // Only increase the brightness by one point if already completely dark
+  if (brightness == MIN_BRIGHTNESS) {
+    brightness += 1;
+  } else {
+    brightness += BRIGHTNESS_INCREMENT;
+  }
+
+  if (brightness > MAX_BRIGHTNESS) {
+    brightness = MAX_BRIGHTNESS;
+  }
+  setBrightness();
+}
+
+void decreaseBrightness() {
+  brightness -= BRIGHTNESS_INCREMENT;
+  if (brightness < MIN_BRIGHTNESS) {
+    brightness = MIN_BRIGHTNESS;
+  }
+  setBrightness();
+}
+
+void setBrightness() {
+  lcd.write(124);
+  lcd.write(brightness);
+  delay(100);
+}
+
 // Resets the millisecond counter
 void resetCounter() {
   millisCounter = millis();
@@ -495,7 +583,7 @@ void displayIncline(int first, int second) {
 
   // write pitch value
   lcd.print(output);
-  lcd.write(DEGREE);
+  lcd.write(DEGREE_CHAR);
 
   int outputLength = output.length() + 1;
 
@@ -514,7 +602,7 @@ void displayIncline(int first, int second) {
 
   // pad spaces before roll value
   lcd.print(output);
-  lcd.write(DEGREE);
+  lcd.write(DEGREE_CHAR);
 
   outputLength += output.length() + 1;
 
@@ -559,14 +647,14 @@ void displayAltitudeWithUnit(float altitude) {
   String altString = String(int(altitude));
 
   if (unit == 'i') {
-    lcd.print(altitude * 3.28084, 0);
+    lcd.print(altitude * metersToFeet, 0);
     lcd.print("'");
 
     // Serial.print(altitude * 3.28084, 0);
     // Serial.println("'");
   } else {
     lcd.print(altitude, 1);
-    lcd.println("m");
+    lcd.print("m");
 
     // Serial.print(altitude, 1);
     // Serial.println("m");
@@ -575,19 +663,29 @@ void displayAltitudeWithUnit(float altitude) {
 
 // Increments the altitude calibration offset
 void incrementAltimeterCalibration() {
-  calibrateAltitudeDisplay++;
+  if (unit == 'i') {
+    calibrateAltitudeDisplay += (1 / metersToFeet);
+  } else {
+    calibrateAltitudeDisplay++;
+  }
 }
 
 // Decrements the altitude calibration offset
 void decrementAltimeterCalibration() {
-  calibrateAltitudeDisplay--;
+  if (unit == 'i') {
+    calibrateAltitudeDisplay -= (1 / metersToFeet);
+  } else {
+    calibrateAltitudeDisplay--;
+  }
 }
 
 // Save the calibration offset
 void saveCalibration() {
+  // Reset to 0 so we get a raw altitude reading from scratch
+  calibrateAltitudeOffset = 0;
   calibrateAltitudeOffset = calibrateAltitudeDisplay - getAltitude(0);
-  minAltitude = minAltitude + calibrateAltitudeOffset;
-  maxAltitude = maxAltitude + calibrateAltitudeOffset;
+  Serial.print("Calibrate offset: ");
+  Serial.println(calibrateAltitudeOffset);
 }
 
 // Stores all of the bmp085's calibration values into global variables
