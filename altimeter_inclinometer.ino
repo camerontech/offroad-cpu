@@ -5,21 +5,24 @@ SoftwareSerial lcd(3,2);
 const bool DEBUG = true;
 
 unsigned long millisCounter = 0;
+unsigned long minMaxAltitudeMillsCounter = 0;
 
 // Menu and display modes
-const String menuText[][2] = {{"  Inclinometer  ","                "},
-                              {"   Altimeter    ","                "},
+const String menuText[][2] = {{"    Incline     ","                "},
+                              {"    Altitude    ","                "},
                               {"     Track      ","    Altitude    "},
+                              {"    Min/Max     ","    Altitude    "},
                               {"   Calibrate    ","   Altimeter    "},
                               {"      Set       ","   Brightness   "}};
-const int menuLength = 5;
-const int INCLINOMETER = 0;
-const int ALTIMETER = 1;
+const int MENU_LENGTH = 6;
+const int INCLINE = 0;
+const int ALTITUDE = 1;
 const int TRACK = 2;
-const int CALIBRATE = 3;
-const int BRIGHTNESS = 4;
-const int MENU = 5;
-int mode = INCLINOMETER;
+const int MINMAX = 3;
+const int CALIBRATE = 4;
+const int BRIGHTNESS = 5;
+const int MENU = 6;
+int mode = INCLINE;
 int displayMenuItem = 0;
 
 // Display in (m)etric or (i)mperial
@@ -120,6 +123,10 @@ int   calibrateAltitudeDisplay = 0;
 // When user wants to track altitude change we start with the current altitude
 float trackingAltitudeOffset = 0;
 
+// Keep track of minimum and maximum altitude
+float minAltitude;
+float maxAltitude;
+
 
 void setup() {
   Serial.begin(9600);
@@ -133,12 +140,16 @@ void setup() {
 void loop() {
   buttonCheck();
 
-  if (mode == INCLINOMETER) {
+  updateMinMaxAltitude();
+
+  if (mode == INCLINE) {
     loopInclinometer();
-  } else if (mode == ALTIMETER) {
+  } else if (mode == ALTITUDE) {
     loopAltimeter();
   } else if (mode == TRACK) {
     loopTrack();
+  } else if (mode == MINMAX) {
+    loopMinMax();
   } else if (mode == CALIBRATE) {
     loopCalibrate();
   } else if (mode == BRIGHTNESS) {
@@ -193,6 +204,8 @@ void setupBarometer() {
 
   Wire.begin();
   bmp085Calibration();
+  minAltitude = getAltitude(0);
+  maxAltitude = minAltitude;
 }
 
 void buttonCheck() {
@@ -226,13 +239,13 @@ void buttonClick() {
   if (mode == MENU) {
     if (buttonState == DOWN) {
       displayMenuItem++;
-      if (displayMenuItem == menuLength) {    // rollover to beginning of list
+      if (displayMenuItem == MENU_LENGTH) {    // rollover to beginning of list
         displayMenuItem = 0;
       }
     } else if (buttonState == UP) {
       displayMenuItem--;
       if (displayMenuItem < 0) {              // rollover to end of list
-        displayMenuItem = menuLength - 1;
+        displayMenuItem = MENU_LENGTH - 1;
       }
     } else if (buttonState == PUSH) {
       mode = displayMenuItem;                 // select menu item
@@ -245,7 +258,7 @@ void buttonClick() {
         decrementAltimeterCalibration();
       } else if (buttonState == PUSH) {
         saveCalibration();
-        mode = ALTIMETER;
+        mode = ALTITUDE;
       }
     } else {                  // when not in calibrate mode, up/down goes to menu, push is optional function
       if (buttonState == UP || buttonState == DOWN) {        // Button pressed up or down to go into the menu
@@ -253,7 +266,7 @@ void buttonClick() {
       } else if (mode == TRACK && buttonState == PUSH) {     // Button clicked while tracking altitude
         // Reset tracking altitude
         resetTrackingAltitude();
-      } else if (mode == ALTIMETER && buttonState == PUSH) { // Button clicked on altimeter
+      } else if (mode == ALTITUDE && buttonState == PUSH) { // Button clicked on altimeter
         // Switch between meters and feet
         switchUnit();
       }
@@ -347,6 +360,20 @@ void loopTrack() {
   }
 }
 
+void loopMinMax() {
+  if (millis() - millisCounter > 1000) {
+    moveToFirstLine();
+    lcd.print("   Min    Max   ");
+    lcd.print("  ");
+    displayAltitudeWithUnit(minAltitude);
+    lcd.print("  ");
+    displayAltitudeWithUnit(maxAltitude);
+    lcd.print("  ");
+
+    resetCounter();
+  }
+}
+
 void loopCalibrate() {
   if (millis() - millisCounter > 250) {
     moveToFirstLine();
@@ -404,9 +431,28 @@ void moveToSecondLine() {
 // Custom functions
 //////////////////////////////
 
+void updateMinMaxAltitude() {
+  if (millis() - minMaxAltitudeMillsCounter > 1000) {
+    float altitude = getAltitude(0);
+
+    if (altitude > maxAltitude) {
+      maxAltitude = altitude;
+    }
+    if (altitude < minAltitude) {
+      minAltitude = altitude;
+    }
+
+    resetMinMaxCounter();
+  }
+}
+
 // Resets the millisecond counter
 void resetCounter() {
   millisCounter = millis();
+}
+
+void resetMinMaxCounter() {
+  minMaxAltitudeMillsCounter = millis();
 }
 
 // Zeros out the tracking altitude
@@ -493,7 +539,17 @@ float getAltitude(float offset) {
 void outputAltitude(bool offset) {
   float altitude = getAltitude(offset ? trackingAltitudeOffset : 0);
 
+  // pad with some white apce
+  for (int i=0;i<4;i++) {
+    lcd.print(" ");
+  }
+
   displayAltitudeWithUnit(altitude);
+
+  // end with white space
+  for (int i=0;i<4;i++) {
+    lcd.print(" ");
+  }
 }
 
 // Write the current altitude to the screen
@@ -502,26 +558,18 @@ void displayAltitudeWithUnit(float altitude) {
 
   String altString = String(int(altitude));
 
-  for (int i=0;i<4;i++) {
-    lcd.print(" ");
-  }
-
   if (unit == 'i') {
     lcd.print(altitude * 3.28084, 0);
-    lcd.print(" ft");
+    lcd.print("'");
 
-    Serial.print(altitude * 3.28084, 0);
-    Serial.println("ft");
+    // Serial.print(altitude * 3.28084, 0);
+    // Serial.println("'");
   } else {
     lcd.print(altitude, 1);
-    lcd.println(" m");
+    lcd.println("m");
 
-    Serial.print(altitude, 1);
-    Serial.println("m");
-  }
-
-  for (int i=0;i<4;i++) {
-    lcd.print(" ");
+    // Serial.print(altitude, 1);
+    // Serial.println("m");
   }
 }
 
@@ -538,6 +586,8 @@ void decrementAltimeterCalibration() {
 // Save the calibration offset
 void saveCalibration() {
   calibrateAltitudeOffset = calibrateAltitudeDisplay - getAltitude(0);
+  minAltitude = minAltitude + calibrateAltitudeOffset;
+  maxAltitude = maxAltitude + calibrateAltitudeOffset;
 }
 
 // Stores all of the bmp085's calibration values into global variables
