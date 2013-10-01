@@ -80,13 +80,13 @@ const unsigned int Z_PIN = A2;
 // const int Z_MAX = 753;
 
 // Uno
-// xMax:835 xMin:341 yMax:843 yMin:337 zMax:719 zMin:209
-const unsigned int X_MIN = 341;
-const unsigned int X_MAX = 835;
-const unsigned int Y_MIN = 337;
-const unsigned int Y_MAX = 843;
-const unsigned int Z_MIN = 209;
-const unsigned int Z_MAX = 719;
+// xMax:738 xMin:230 yMax:767 yMin:255 zMax:781 zMin:271
+const unsigned int X_MAX = 741;
+const unsigned int X_MIN = 223;
+const unsigned int Y_MAX = 768;
+const unsigned int Y_MIN = 255;
+const unsigned int Z_MAX = 802;
+const unsigned int Z_MIN = 280;
 
 // ASCII character for degree symbol
 const unsigned int DEGREE_CHAR = 223;
@@ -143,6 +143,8 @@ float metersToFeet = 3.28084;
 
 void setup() {
   Serial.begin(9600);
+  
+  analogReference(EXTERNAL);
 
   setupDisplay();
   setupButton();
