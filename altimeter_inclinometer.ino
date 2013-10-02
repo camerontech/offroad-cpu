@@ -8,14 +8,15 @@ unsigned long millisCounter = 0;
 unsigned long minMaxAltitudeMillsCounter = 0;
 
 // Menu and display modes
-const String menuText[][2] = {{"    Incline     ","                "},
-                              {"    Altitude    ","                "},
-                              {"     Track      ","    Altitude    "},
-                              {"    Min/Max     ","    Altitude    "},
-                              {"   Calibrate    ","   Altimeter    "},
-                              {"  Temperature   ","                "},
-                              {"      Set       ","   Brightness   "}};
-const unsigned int MENU_LENGTH = 7;
+const String menuText[][2] = {{"         Incline","                "},
+                              {"        Altitude","                "},
+                              {"           Track","        Altitude"},
+                              {"         Min/Max","        Altitude"},
+                              {"       Calibrate","        Altitude"},
+                              {"            Zero","         Incline"},
+                              {"     Temperature","                "},
+                              {"             Set","      Brightness"}};
+const unsigned int MENU_LENGTH = 8;
 const unsigned int INCLINE = 0;
 const unsigned int ALTITUDE = 1;
 const unsigned int TRACK = 2;
