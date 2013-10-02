@@ -22,9 +22,10 @@ const unsigned int ALTITUDE = 1;
 const unsigned int TRACK = 2;
 const unsigned int MINMAX = 3;
 const unsigned int CALIBRATE = 4;
-const unsigned int TEMPERATURE = 5;
-const unsigned int BRIGHTNESS = 6;
-const unsigned int MENU = 7;
+const unsigned int ZERO = 5;
+const unsigned int TEMPERATURE = 6;
+const unsigned int BRIGHTNESS = 7;
+const unsigned int MENU = 8;
 // Start on the incline view
 unsigned int mode = INCLINE;
 int displayMenuItem = 0;
@@ -89,6 +90,16 @@ const unsigned int Y_MIN = 255;
 const unsigned int Z_MAX = 802;
 const unsigned int Z_MIN = 280;
 
+// So that we can zero out the inclinometer readings
+int lastX, lastY, lastZ;
+int xOffset = 0;
+int yOffset = 0;
+int zOffset = 0;
+
+int lastPitch, lastRoll;
+int pitchOffset = 0;
+int rollOffset = 0;
+
 // ASCII character for degree symbol
 const unsigned int DEGREE_CHAR = 223;
 
@@ -125,11 +136,11 @@ long pressure;
 
 // Use these for altitude conversions
 const float p0 = 101325;     // Pressure at sea level (Pa)
-float altitude;
+// float altitude;
 
 // User-defined offset based some something like GPS readings
 float calibrateAltitudeOffset = 0;
-float calibrateAltitudeDisplay = 0;
+float calibrateAltitudeDisplay;
 
 // When user wants to track altitude change we start with the current altitude
 float trackingAltitudeOffset = 0;
@@ -144,7 +155,7 @@ float metersToFeet = 3.28084;
 
 void setup() {
   Serial.begin(9600);
-  
+
   analogReference(EXTERNAL);
 
   setupDisplay();
@@ -200,8 +211,6 @@ void setupDisplay() {
 
 
 void setupButton() {
-  Serial.println("Setting up button...");
-
   pinMode(UP, INPUT);
   pinMode(PUSH, INPUT);
   pinMode(DOWN, INPUT);
@@ -214,24 +223,18 @@ void setupButton() {
 
 
 void setupAccelerometer() {
-  Serial.println("Setting up altimeter...");
-
 }
 
 
 void setupBarometer() {
-  Serial.println("Setting up barometer...");
-
   Wire.begin();
   bmp085Calibration();
-  minAltitude = getAltitude(0);
+  minAltitude = getAltitude();
   maxAltitude = minAltitude;
 }
 
 
 void buttonCheck() {
-  // Serial.println("Checking for button press...");
-
   if (digitalRead(UP) == LOW) {
     buttonState = UP;
   } else if (digitalRead(PUSH) == LOW) {
@@ -245,8 +248,6 @@ void buttonCheck() {
   if (buttonState != lastState) {
     if (buttonState != 0) {
       buttonClick();
-      Serial.print("Button: ");
-      Serial.println(buttonState);
     }
     lastState = buttonState;
   }
@@ -269,7 +270,14 @@ void buttonClick() {
         displayMenuItem = MENU_LENGTH - 1;
       }
     } else if (buttonState == PUSH) {
-      mode = displayMenuItem;                 // select menu item
+      if (displayMenuItem == ZERO) {          // viewing the "zero incline" menu option
+        zeroInclinometer();
+        mode = INCLINE;
+        displayMenuItem = INCLINE;
+      } else {
+        mode = displayMenuItem;                 // select menu item
+        startMode();
+      }
     }
   } else {
     if (mode == CALIBRATE) {  // when in calibrate mode, up/down change values, push goes back to menu
@@ -304,6 +312,15 @@ void buttonClick() {
   }
 }
 
+// Called when a menu item is selected but before looping through that mode
+void startMode() {
+  if (mode == CALIBRATE) {
+    startCalibration();
+  }
+}
+
+
+
 
 ////////////
 // Loops  //
@@ -315,17 +332,12 @@ void loopMenu() {
     lcd.print(menuText[displayMenuItem][0]);
     lcd.print(menuText[displayMenuItem][1]);
 
-    Serial.println("------Menu------");
-    Serial.println(menuText[displayMenuItem][0]);
-    Serial.println(menuText[displayMenuItem][1]);
-
     resetCounter();
   }
 }
 
 void loopInclinometer() {
   if (millis() - millisCounter > 250) {
-    Serial.println("Inclinometer loop...");
 
     // sample the voltages
     delay(10);
@@ -335,19 +347,22 @@ void loopInclinometer() {
     delay(10);
     int unsigned z = analogRead(Z_PIN);
 
-    if (DEBUG) {
-      Serial.print(" x");
-      Serial.print(x);
-      Serial.print(" y");
-      Serial.print(y);
-      Serial.print(" z");
-      Serial.println(z);
-    }
-
     // convert to range of -90 to +90 degrees
     int xAng = map(x, X_MIN, X_MAX, -90, 90);
     int yAng = map(y, Y_MIN, Y_MAX, -90, 90);
     int zAng = map(z, Z_MIN, Z_MAX, -90, 90);
+
+    // Keep the last measurement so we can zero out without having to read
+    // for real (the first few analogRead() measurements are inaccurate after
+    // doing a few digitalRead()s)
+    // lastX = xAng;
+    // lastY = yAng;
+    // lastZ = zAng;
+
+    // // Take into account any zeroing that may have happened
+    // xAng -= xOffset;
+    // yAng -= yOffset;
+    // zAng -= zOffset;
 
     // convert radians to degrees
     int pitch = -(RAD_TO_DEG * (atan2(-yAng, -zAng) + PI));
@@ -361,20 +376,42 @@ void loopInclinometer() {
       roll = roll - 360;
     }
 
+    lastPitch = pitch;
+    lastRoll = roll;
+
+    pitch -= pitchOffset;
+    roll -= rollOffset;
+
+    // Now we need to re-add the offset in case we try to roll around 180/-180 again
+    if (pitch < -180) {
+      pitch += 360;
+    } else if (pitch > 180) {
+      pitch -= 360;
+    }
+    if (roll < -180) {
+      roll += 360;
+    } else if (roll > 180) {
+      roll -= 360;
+    }
+
+    // int correctedPitch = map(pitch, 0, 360, -180, 180);
+    // int correctedRoll = map(roll, 0, 360, -180, 180);
+
+
     // write the pitch and roll to the second line
-    displayIncline(roll, pitch);
+    displayIncline(pitch, roll);
 
     resetCounter();
   }
 }
 
+
 void loopAltimeter() {
   if (millis() - millisCounter > 1000) {
-    Serial.println("Altimeter loop...");
 
     moveToFirstLine();
     lcd.print("    Altitude    ");
-    outputAltitude(false);
+    outputAltitudeLine(false, NULL);
 
     resetCounter();
   }
@@ -384,7 +421,7 @@ void loopTrack() {
   if (millis() - millisCounter > 1000) {
     moveToFirstLine();
     lcd.print(" Track Altitude ");
-    outputAltitude(true);
+    outputAltitudeLine(true, NULL);
 
     resetCounter();
   }
@@ -394,11 +431,30 @@ void loopMinMax() {
   if (millis() - millisCounter > 1000) {
     moveToFirstLine();
     lcd.print("   Min    Max   ");
-    lcd.print("  ");
+
+    int whiteSpaces = 16 - altitudeWidth(minAltitude) - altitudeWidth(maxAltitude);
+
+    int left, middle, right;
+    left = right = middle = whiteSpaces / 3;
+
+    if (whiteSpaces % 3 == 1) {
+      right += 1;
+    } else if (whiteSpaces % 3 == 2) {
+      left += 1;
+      right += 1;
+    }
+
+    for (int i=0; i<left; i++) {
+      lcd.print(" ");
+    }
     displayAltitudeWithUnit(minAltitude);
-    lcd.print("  ");
+    for (int i=0; i<middle; i++) {
+      lcd.print(" ");
+    }
     displayAltitudeWithUnit(maxAltitude);
-    lcd.print("  ");
+    for (int i=0; i<right; i++) {
+      lcd.print(" ");
+    }
 
     resetCounter();
   }
@@ -408,14 +464,10 @@ void loopCalibrate() {
   if (millis() - millisCounter > 250) {
     moveToFirstLine();
     lcd.print("Current Altitude");
-    if (calibrateAltitudeDisplay == 0) {
-      calibrateAltitudeDisplay = getAltitude(0);
+    if (calibrateAltitudeDisplay == NULL) {
+      calibrateAltitudeDisplay = getAltitude();
     }
-    lcd.print("    ");
-    // Serial.println("Current Altitude");
-    // Serial.print("      ");
-    displayAltitudeWithUnit(calibrateAltitudeDisplay);
-    lcd.print("    ");
+    outputAltitudeLine(false, calibrateAltitudeDisplay);
     resetCounter();
   }
 }
@@ -444,7 +496,6 @@ void loopTemperature() {
 
 void loopBrightness() {
   if (millis() - millisCounter > 250) {
-    Serial.println("Brightness loop...");
 
     moveToFirstLine();
     lcd.print("   Brightness   ");
@@ -463,10 +514,27 @@ void loopBrightness() {
 
 
 
+//////////////////////////////
+// Counters
+//////////////////////////////
+
+// Resets the millisecond counter
+void resetCounter() {
+  millisCounter = millis();
+}
+
+// A separate counter that keeps track of when we record min/max altitude
+// behind the scenes
+void resetMinMaxCounter() {
+  minMaxAltitudeMillsCounter = millis();
+}
 
 
 
 
+//////////////////////////////
+// Display functions
+//////////////////////////////
 
 void clearDisplay() {
   moveToFirstLine();
@@ -482,31 +550,6 @@ void moveToFirstLine() {
 void moveToSecondLine() {
   lcd.write(254);
   lcd.write(192);
-}
-
-
-
-
-
-
-
-//////////////////////////////
-// Custom functions
-//////////////////////////////
-
-void updateMinMaxAltitude() {
-  if (millis() - minMaxAltitudeMillsCounter > 1000) {
-    float altitude = getAltitude(0);
-
-    if (altitude > maxAltitude) {
-      maxAltitude = altitude;
-    }
-    if (altitude < minAltitude) {
-      minAltitude = altitude;
-    }
-
-    resetMinMaxCounter();
-  }
 }
 
 void increaseBrightness() {
@@ -537,32 +580,21 @@ void setBrightness() {
   delay(100);
 }
 
-// Resets the millisecond counter
-void resetCounter() {
-  millisCounter = millis();
+
+
+//////////////////////////////
+// Incline functions
+//////////////////////////////
+
+void zeroInclinometer() {
+  xOffset = lastX;
+  yOffset = lastY;
+  zOffset = lastZ;
+
+  pitchOffset = lastPitch;
+  rollOffset = lastRoll;
 }
 
-void resetMinMaxCounter() {
-  minMaxAltitudeMillsCounter = millis();
-}
-
-// Zeros out the tracking altitude
-void resetTrackingAltitude() {
-  Serial.println("Resetting tracking altitude.");
-  trackingAltitudeOffset = getAltitude(0);
-  Serial.print("trackingAltitudeOffset: ");
-  Serial.println(trackingAltitudeOffset);
-}
-
-// Swaps between metric/imperial measurements
-void switchUnit() {
-  Serial.println("Switching units.");
-  if (unit == 'i') {
-    unit = 'm';
-  } else {
-    unit = 'i';
-  }
-}
 
 // Writes the current pitch/roll to the screen
 void displayIncline(int first, int second) {
@@ -616,53 +648,166 @@ void displayIncline(int first, int second) {
 
 }
 
-// Gets the current altitude
-float getAltitude(float offset) {
-  temperature = bmp085GetTemperature(bmp085ReadUT());
-  pressure = bmp085GetPressure(bmp085ReadUP());
-  altitude = (float)44330 * (1 - pow(((float) pressure/p0), 0.190295));
-  altitude = altitude + calibrateAltitudeOffset - offset;
 
-  return altitude;
+
+
+//////////////////////////////
+// Altitude functions
+//////////////////////////////
+
+// Zeros out the tracking altitude
+void resetTrackingAltitude() {
+  trackingAltitudeOffset = getAltitude() + calibrateAltitudeOffset;
 }
 
-// Gets altitude with or without any offset
-void outputAltitude(bool offset) {
-  float altitude = getAltitude(offset ? trackingAltitudeOffset : 0);
 
-  // pad with some white apce
-  for (int i=0;i<4;i++) {
+// Save min/max values every second
+void updateMinMaxAltitude() {
+  if (millis() - minMaxAltitudeMillsCounter > 1000) {
+    float altitude = getAltitude();
+
+    if (altitude > maxAltitude) {
+      maxAltitude = altitude;
+    }
+    if (altitude < minAltitude) {
+      minAltitude = altitude;
+    }
+
+    resetMinMaxCounter();
+  }
+}
+
+
+// Swaps between metric/imperial measurements
+void switchUnit() {
+  if (unit == 'i') {
+    unit = 'm';
+  } else {
+    unit = 'i';
+  }
+}
+
+
+// Gets the current altitude
+float getAltitude() {
+  temperature = bmp085GetTemperature(bmp085ReadUT());
+  pressure = bmp085GetPressure(bmp085ReadUP());
+  return (float)44330 * (1 - pow(((float) pressure/p0), 0.190295));
+}
+
+
+// Write an entire line with the altitude centered on the line
+void outputAltitudeLine(bool includeTrackingOffset, float overrideAltitude) {
+  float altitude;
+
+  if (overrideAltitude == NULL) {
+    altitude = getAltitude();
+  } else {
+    altitude = overrideAltitude;
+  }
+
+  if (includeTrackingOffset) {
+    altitude -= trackingAltitudeOffset;
+  }
+
+  Serial.println("outputAltitudeLine()");
+  Serial.print("altitude: ");
+  Serial.println(altitude);
+  Serial.println("");
+
+  // pad with some white space
+  int iUpTo = calculateAltitudeBeforePadding(altitude);
+  for (int i=0; i<iUpTo; i++) {
     lcd.print(" ");
   }
 
   displayAltitudeWithUnit(altitude);
 
   // end with white space
-  for (int i=0;i<4;i++) {
+  int jUpTo = calculateAltitudeAfterPadding(altitude);
+  for (int j=0; j<jUpTo; j++) {
     lcd.print(" ");
   }
 }
 
-// Write the current altitude to the screen
+// Write the only the altitude to the screen
 void displayAltitudeWithUnit(float altitude) {
-  Serial.println("displayAltitudeWithUnit()");
-
-  String altString = String(int(altitude));
+  float calibratedAltitude = altitude + calibrateAltitudeOffset;
+  float num;
+  char unitChar;
+  int decimals;
 
   if (unit == 'i') {
-    lcd.print(altitude * metersToFeet, 0);
-    lcd.print("'");
-
-    // Serial.print(altitude * 3.28084, 0);
-    // Serial.println("'");
+    int intAltitude = round(calibratedAltitude * metersToFeet);
+    num = round(calibratedAltitude * metersToFeet);
+    unitChar = '\'';
+    decimals = 0;
   } else {
-    lcd.print(altitude, 1);
-    lcd.print("m");
-
-    // Serial.print(altitude, 1);
-    // Serial.println("m");
+    num = round(calibratedAltitude * 10) / 10;
+    unitChar = 'm';
+    decimals = 1;
   }
+
+  lcd.print(num, decimals);
+  lcd.print(unitChar);
 }
+
+
+// White space to the left of an altitude line
+int calculateAltitudeBeforePadding(float altitude) {
+  int altitudeChars = altitudeWidth(altitude);
+  int whiteSpaces = 16 - altitudeChars;
+
+  Serial.println("calculateAltitudeBeforePadding()");
+  Serial.print("altitudeChars:");
+  Serial.println(altitudeChars);
+
+  Serial.print("altitude:");
+  Serial.println(altitude);
+
+  Serial.print("whiteSpaces:");
+  Serial.println(whiteSpaces / 2);
+
+  return whiteSpaces / 2;
+}
+
+
+// White space to the right of an altitude line
+int calculateAltitudeAfterPadding(float altitude) {
+  int altitudeChars = altitudeWidth(altitude);
+  int whiteSpaces = 16 - altitudeChars;
+
+  Serial.println("calculateAltitudeAfterPadding()");
+  Serial.print("altitudeChars:");
+  Serial.println(altitudeChars);
+  Serial.print("whiteSpaces:");
+  Serial.println((whiteSpaces / 2) + (whiteSpaces % 2));
+
+  return (whiteSpaces / 2) + (whiteSpaces % 2);
+}
+
+
+// Width of altitude itself (including unit)
+int altitudeWidth(float altitude) {
+  int altitudeChars = 1;   // start with one character for the unit
+
+  if (unit == 'i') {
+    int intAltitude = round(altitude * metersToFeet);
+    altitudeChars = altitudeChars + String(intAltitude).length();
+  } else {
+    int intAltitude = round(altitude * 10);
+    altitudeChars = altitudeChars + String(intAltitude).length() + 1; // add one character for the decimal in meters
+  }
+
+  return altitudeChars;
+}
+
+
+
+
+///////////////////////
+// Altitude calibration functions
+///////////////////////
 
 // Increments the altitude calibration offset
 void incrementAltimeterCalibration() {
@@ -682,14 +827,25 @@ void decrementAltimeterCalibration() {
   }
 }
 
+// Restarts the calibration process
+void startCalibration() {
+  calibrateAltitudeDisplay = getAltitude() + calibrateAltitudeOffset;
+  calibrateAltitudeOffset = 0;
+}
+
 // Save the calibration offset
 void saveCalibration() {
   // Reset to 0 so we get a raw altitude reading from scratch
   calibrateAltitudeOffset = 0;
-  calibrateAltitudeOffset = calibrateAltitudeDisplay - getAltitude(0);
-  Serial.print("Calibrate offset: ");
-  Serial.println(calibrateAltitudeOffset);
+  calibrateAltitudeOffset = calibrateAltitudeDisplay - getAltitude();
 }
+
+
+
+
+///////////////////////
+// Raw barometer functions
+///////////////////////
 
 // Stores all of the bmp085's calibration values into global variables
 // Calibration values are required to calculate temp and pressure
