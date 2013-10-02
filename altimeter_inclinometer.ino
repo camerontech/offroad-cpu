@@ -1,8 +1,11 @@
+#include <Wire.h>
 #include <SoftwareSerial.h>
+#include <EEPROM.h>
 
 SoftwareSerial lcd(3,2);
 
-const bool DEBUG = true;
+const int VERSION = 1;
+const int VERSION_ADDRESS = 10;
 
 unsigned long millisCounter = 0;
 unsigned long minMaxAltitudeMillsCounter = 0;
@@ -15,8 +18,9 @@ const String menuText[][2] = {{"         Incline","                "},
                               {"       Calibrate","        Altitude"},
                               {"            Zero","         Incline"},
                               {"     Temperature","                "},
-                              {"             Set","      Brightness"}};
-const unsigned int MENU_LENGTH = 8;
+                              {"             Set","      Brightness"},
+                              {"         Factory","           Reset"}};
+const unsigned int MENU_LENGTH = 9;
 const unsigned int INCLINE = 0;
 const unsigned int ALTITUDE = 1;
 const unsigned int TRACK = 2;
@@ -25,13 +29,15 @@ const unsigned int CALIBRATE = 4;
 const unsigned int ZERO = 5;
 const unsigned int TEMPERATURE = 6;
 const unsigned int BRIGHTNESS = 7;
-const unsigned int MENU = 8;
+const unsigned int RESET = 8;
+const unsigned int MENU = 9;
 // Start on the incline view
 unsigned int mode = INCLINE;
 int displayMenuItem = 0;
 
 // Display in (m)etric or (i)mperial
-char unit = 'i';
+char unit;
+const int UNIT_ADDRESS = 11;
 
 // Display character for brightness meter
 const unsigned int BLOCK_CHAR = 255;
@@ -91,14 +97,11 @@ const unsigned int Z_MAX = 802;
 const unsigned int Z_MIN = 280;
 
 // So that we can zero out the inclinometer readings
-int lastX, lastY, lastZ;
-int xOffset = 0;
-int yOffset = 0;
-int zOffset = 0;
-
 int lastPitch, lastRoll;
-int pitchOffset = 0;
-int rollOffset = 0;
+int pitchOffset, rollOffset;
+// EEPROM addresses
+const int PITCH_OFFSET_ADDRESS = 12;
+const int ROLL_OFFSET_ADDRESS = 13;
 
 // ASCII character for degree symbol
 const unsigned int DEGREE_CHAR = 223;
@@ -108,9 +111,7 @@ const unsigned int DEGREE_CHAR = 223;
 // Barometer
 //////////////////////
 
-#include <Wire.h>
-
-#define BMP085_ADDRESS 0x77  // I2C address of BMP085
+const int BMP085_ADDRESS = 0x77;  // I2C address of BMP085
 
 const unsigned char OSS = 3;  // Oversampling Setting
 
@@ -136,7 +137,6 @@ long pressure;
 
 // Use these for altitude conversions
 const float p0 = 101325;     // Pressure at sea level (Pa)
-// float altitude;
 
 // User-defined offset based some something like GPS readings
 float calibrateAltitudeOffset = 0;
@@ -158,6 +158,20 @@ void setup() {
 
   analogReference(EXTERNAL);
 
+  // Serial.print("VERSION_ADDRESS: ");
+  // Serial.println(EEPROM.read(VERSION_ADDRESS));
+  // Serial.print("UNIT_ADDRESS: ");
+  // Serial.println(EEPROM.read(UNIT_ADDRESS));
+  // Serial.print("PITCH_OFFSET_ADDRESS: ");
+  // Serial.println(EEPROM.read(PITCH_OFFSET_ADDRESS));
+  // Serial.print("ROLL_OFFSET_ADDRESS: ");
+  // Serial.println(EEPROM.read(ROLL_OFFSET_ADDRESS));
+
+  if (EEPROM.read(VERSION_ADDRESS) != VERSION) {
+    factoryReset();
+  }
+
+  setupVariables();
   setupDisplay();
   setupButton();
   setupAccelerometer();
@@ -186,12 +200,48 @@ void loop() {
   } else if (mode == MENU) {
     loopMenu();
   }
+
+  // Serial.print("VERSION_ADDRESS: ");
+  // Serial.println(EEPROM.read(VERSION_ADDRESS));
+  // Serial.print("UNIT_ADDRESS: ");
+  // Serial.println(EEPROM.read(UNIT_ADDRESS));
+  // Serial.print("PITCH_OFFSET_ADDRESS: ");
+  // Serial.println(EEPROM.read(PITCH_OFFSET_ADDRESS));
+  // Serial.print("ROLL_OFFSET_ADDRESS: ");
+  // Serial.println(EEPROM.read(ROLL_OFFSET_ADDRESS));
+
+  // delay(500);
 }
 
 
 ////////////
 // Setups //
 ////////////
+
+void factoryReset() {
+  Serial.println("FACTORY RESET");
+  EEPROM.write(UNIT_ADDRESS, 1);
+  unit = 'i';
+  EEPROM.write(PITCH_OFFSET_ADDRESS, 0);
+  pitchOffset = 0;
+  EEPROM.write(ROLL_OFFSET_ADDRESS, 0);
+  rollOffset = 0;
+  EEPROM.write(VERSION_ADDRESS, VERSION);
+}
+
+void setupVariables() {
+
+  // Units
+  if (EEPROM.read(UNIT_ADDRESS) == 0) {
+    unit = 'm';
+  } else {
+    unit = 'i';
+  }
+
+  // Incline offsets
+  pitchOffset = EEPROM.read(PITCH_OFFSET_ADDRESS);
+  rollOffset = EEPROM.read(ROLL_OFFSET_ADDRESS);
+}
 
 void setupDisplay() {
   lcd.begin(9600);
@@ -261,7 +311,7 @@ void buttonClick() {
   if (mode == MENU) {
     if (buttonState == DOWN) {
       displayMenuItem++;
-      if (displayMenuItem == MENU_LENGTH) {    // rollover to beginning of list
+      if (displayMenuItem == MENU_LENGTH) {   // rollover to beginning of list
         displayMenuItem = 0;
       }
     } else if (buttonState == UP) {
@@ -274,8 +324,12 @@ void buttonClick() {
         zeroInclinometer();
         mode = INCLINE;
         displayMenuItem = INCLINE;
-      } else {
-        mode = displayMenuItem;                 // select menu item
+      } else if (displayMenuItem == RESET) {  // Factory Reset feature
+        factoryReset();
+        mode = INCLINE;
+        displayMenuItem = INCLINE;
+      } else{
+        mode = displayMenuItem;               // select menu item
         startMode();
       }
     }
@@ -352,18 +406,6 @@ void loopInclinometer() {
     int yAng = map(y, Y_MIN, Y_MAX, -90, 90);
     int zAng = map(z, Z_MIN, Z_MAX, -90, 90);
 
-    // Keep the last measurement so we can zero out without having to read
-    // for real (the first few analogRead() measurements are inaccurate after
-    // doing a few digitalRead()s)
-    // lastX = xAng;
-    // lastY = yAng;
-    // lastZ = zAng;
-
-    // // Take into account any zeroing that may have happened
-    // xAng -= xOffset;
-    // yAng -= yOffset;
-    // zAng -= zOffset;
-
     // convert radians to degrees
     int pitch = -(RAD_TO_DEG * (atan2(-yAng, -zAng) + PI));
     int roll = RAD_TO_DEG * (atan2(-xAng, -zAng) + PI);
@@ -376,9 +418,11 @@ void loopInclinometer() {
       roll = roll - 360;
     }
 
+    // TODO: actually sample pitch/roll at zero time
     lastPitch = pitch;
     lastRoll = roll;
 
+    // Take into account any offset
     pitch -= pitchOffset;
     roll -= rollOffset;
 
@@ -432,27 +476,29 @@ void loopMinMax() {
     moveToFirstLine();
     lcd.print("   Min    Max   ");
 
-    int whiteSpaces = 16 - altitudeWidth(minAltitude) - altitudeWidth(maxAltitude);
-
-    int left, middle, right;
-    left = right = middle = whiteSpaces / 3;
-
-    if (whiteSpaces % 3 == 1) {
-      right += 1;
-    } else if (whiteSpaces % 3 == 2) {
-      left += 1;
-      right += 1;
-    }
-
-    for (int i=0; i<left; i++) {
+    // Output minimum altitude
+    int beforeMin = center(altitudeWidth(minAltitude), 8) / 16;
+    for (int i=0; i<beforeMin; i++) {
       lcd.print(" ");
     }
+
     displayAltitudeWithUnit(minAltitude);
-    for (int i=0; i<middle; i++) {
+
+    int afterMin = center(altitudeWidth(minAltitude), 8) % 16;
+    for (int i=0; i<afterMin; i++) {
       lcd.print(" ");
     }
+
+    // Output maximum altitude
+    int beforeMax = center(altitudeWidth(maxAltitude), 8) / 16;
+    for (int i=0; i<beforeMax; i++) {
+      lcd.print(" ");
+    }
+
     displayAltitudeWithUnit(maxAltitude);
-    for (int i=0; i<right; i++) {
+
+    int afterMax = center(altitudeWidth(maxAltitude), 8) % 16;
+    for (int i=0; i<afterMax; i++) {
       lcd.print(" ");
     }
 
@@ -511,6 +557,23 @@ void loopBrightness() {
 }
 
 
+
+
+//////////////////////////////
+// Random helpers
+//////////////////////////////
+
+// Returns a number that has the left and right padding values "encoded" into it.
+// Divide by 16 to get the left padding and MOD by 16 to get the right padding.
+//
+// 71 means 4 characters to the left (0x47 / 16) and 7 to the right (0x47 % 16)
+int center(int chars, int width) {
+  int left, right;
+  left = right = (width - chars) / 2;
+  right += (width - chars) % 2;
+
+  return (left * 16) + right;
+}
 
 
 
@@ -587,12 +650,10 @@ void setBrightness() {
 //////////////////////////////
 
 void zeroInclinometer() {
-  xOffset = lastX;
-  yOffset = lastY;
-  zOffset = lastZ;
-
   pitchOffset = lastPitch;
+  EEPROM.write(PITCH_OFFSET_ADDRESS, pitchOffset);
   rollOffset = lastRoll;
+  EEPROM.write(ROLL_OFFSET_ADDRESS, rollOffset);
 }
 
 
@@ -682,8 +743,10 @@ void updateMinMaxAltitude() {
 void switchUnit() {
   if (unit == 'i') {
     unit = 'm';
+    EEPROM.write(UNIT_ADDRESS, 0);
   } else {
     unit = 'i';
+    EEPROM.write(UNIT_ADDRESS, 1);
   }
 }
 
@@ -716,16 +779,16 @@ void outputAltitudeLine(bool includeTrackingOffset, float overrideAltitude) {
   Serial.println("");
 
   // pad with some white space
-  int iUpTo = calculateAltitudeBeforePadding(altitude);
-  for (int i=0; i<iUpTo; i++) {
+  int before = center(altitudeWidth(altitude), 16) / 16;
+  for (int i=0; i<before; i++) {
     lcd.print(" ");
   }
 
   displayAltitudeWithUnit(altitude);
 
   // end with white space
-  int jUpTo = calculateAltitudeAfterPadding(altitude);
-  for (int j=0; j<jUpTo; j++) {
+  int after = center(altitudeWidth(altitude), 16) % 16;
+  for (int j=0; j<after; j++) {
     lcd.print(" ");
   }
 }
@@ -743,7 +806,7 @@ void displayAltitudeWithUnit(float altitude) {
     unitChar = '\'';
     decimals = 0;
   } else {
-    num = round(calibratedAltitude * 10) / 10;
+    num = round(calibratedAltitude * 10) / 10.0;
     unitChar = 'm';
     decimals = 1;
   }
@@ -753,38 +816,38 @@ void displayAltitudeWithUnit(float altitude) {
 }
 
 
-// White space to the left of an altitude line
-int calculateAltitudeBeforePadding(float altitude) {
-  int altitudeChars = altitudeWidth(altitude);
-  int whiteSpaces = 16 - altitudeChars;
+// // White space to the left of an altitude line
+// int calculateAltitudeBeforePadding(float altitude) {
+//   int altitudeChars = altitudeWidth(altitude);
+//   int whiteSpaces = 16 - altitudeChars;
 
-  Serial.println("calculateAltitudeBeforePadding()");
-  Serial.print("altitudeChars:");
-  Serial.println(altitudeChars);
+//   Serial.println("calculateAltitudeBeforePadding()");
+//   Serial.print("altitudeChars:");
+//   Serial.println(altitudeChars);
 
-  Serial.print("altitude:");
-  Serial.println(altitude);
+//   Serial.print("altitude:");
+//   Serial.println(altitude);
 
-  Serial.print("whiteSpaces:");
-  Serial.println(whiteSpaces / 2);
+//   Serial.print("whiteSpaces:");
+//   Serial.println(whiteSpaces / 2);
 
-  return whiteSpaces / 2;
-}
+//   return whiteSpaces / 2;
+// }
 
 
-// White space to the right of an altitude line
-int calculateAltitudeAfterPadding(float altitude) {
-  int altitudeChars = altitudeWidth(altitude);
-  int whiteSpaces = 16 - altitudeChars;
+// // White space to the right of an altitude line
+// int calculateAltitudeAfterPadding(float altitude) {
+//   int altitudeChars = altitudeWidth(altitude);
+//   int whiteSpaces = 16 - altitudeChars;
 
-  Serial.println("calculateAltitudeAfterPadding()");
-  Serial.print("altitudeChars:");
-  Serial.println(altitudeChars);
-  Serial.print("whiteSpaces:");
-  Serial.println((whiteSpaces / 2) + (whiteSpaces % 2));
+//   Serial.println("calculateAltitudeAfterPadding()");
+//   Serial.print("altitudeChars:");
+//   Serial.println(altitudeChars);
+//   Serial.print("whiteSpaces:");
+//   Serial.println((whiteSpaces / 2) + (whiteSpaces % 2));
 
-  return (whiteSpaces / 2) + (whiteSpaces % 2);
-}
+//   return (whiteSpaces / 2) + (whiteSpaces % 2);
+// }
 
 
 // Width of altitude itself (including unit)
@@ -996,4 +1059,3 @@ unsigned long bmp085ReadUP() {
 
   return up;
 }
-
