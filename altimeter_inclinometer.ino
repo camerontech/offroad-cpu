@@ -281,8 +281,7 @@ void setupAccelerometer() {
 void setupBarometer() {
   Wire.begin();
   bmp085Calibration();
-  minAltitude = getAltitude();
-  maxAltitude = minAltitude;
+  resetMinMaxAltitude();
 }
 
 
@@ -305,7 +304,7 @@ void buttonCheck() {
   }
 
   // debounce delay
-  delay(50);
+  delay(25);
 }
 
 
@@ -358,8 +357,9 @@ void buttonClick() {
       if (buttonState == UP || buttonState == DOWN) {        // Button pressed up or down to go into the menu
         mode = MENU;
       } else if (mode == TRACK && buttonState == PUSH) {     // Button clicked while tracking altitude
-        // Reset tracking altitude
         resetTrackingAltitude();
+      } else if (mode == MINMAX && buttonState == PUSH) {    // Button clicked while viewing min/max
+        resetMinMaxAltitude();
       } else if (mode == ALTITUDE || mode == TEMPERATURE && buttonState == PUSH) { // Button clicked on altimeter
         // Switch between meters and feet
         switchUnit();
@@ -721,6 +721,12 @@ void displayIncline(int first, int second) {
 // Zeros out the tracking altitude
 void resetTrackingAltitude() {
   trackingAltitudeOffset = getAltitude() + calibrateAltitudeOffset;
+}
+
+
+void resetMinMaxAltitude() {
+  minAltitude = getAltitude();
+  maxAltitude = minAltitude;
 }
 
 
