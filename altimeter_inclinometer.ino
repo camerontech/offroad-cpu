@@ -4,7 +4,7 @@
 
 SoftwareSerial lcd(3,2);
 
-const int VERSION = 1;
+const int VERSION = 2;
 const int VERSION_ADDRESS = 10;
 
 unsigned long millisCounter = 0;
@@ -31,13 +31,12 @@ const unsigned int TEMPERATURE = 6;
 const unsigned int BRIGHTNESS = 7;
 const unsigned int RESET = 8;
 const unsigned int MENU = 9;
-// Start on the incline view
-unsigned int mode = INCLINE;
-int displayMenuItem = 0;
+// Keep track of where we are
+unsigned int mode;
+int displayMenuItem;
 
 // Display in (m)etric or (i)mperial
 char unit;
-const int UNIT_ADDRESS = 11;
 
 // Display character for brightness meter
 const unsigned int BLOCK_CHAR = 255;
@@ -99,12 +98,14 @@ const unsigned int Z_MIN = 280;
 // So that we can zero out the inclinometer readings
 int lastPitch, lastRoll;
 int pitchOffset, rollOffset;
-// EEPROM addresses
-const int PITCH_OFFSET_ADDRESS = 12;
-const int ROLL_OFFSET_ADDRESS = 13;
 
 // ASCII character for degree symbol
 const unsigned int DEGREE_CHAR = 223;
+
+const int UNIT_ADDRESS = 11;
+const int PITCH_OFFSET_ADDRESS = 12;
+const int ROLL_OFFSET_ADDRESS = 13;
+const int MODE_ADDRESS = 14;
 
 
 //////////////////////
@@ -158,14 +159,16 @@ void setup() {
 
   analogReference(EXTERNAL);
 
-  // Serial.print("VERSION_ADDRESS: ");
-  // Serial.println(EEPROM.read(VERSION_ADDRESS));
-  // Serial.print("UNIT_ADDRESS: ");
-  // Serial.println(EEPROM.read(UNIT_ADDRESS));
-  // Serial.print("PITCH_OFFSET_ADDRESS: ");
-  // Serial.println(EEPROM.read(PITCH_OFFSET_ADDRESS));
-  // Serial.print("ROLL_OFFSET_ADDRESS: ");
-  // Serial.println(EEPROM.read(ROLL_OFFSET_ADDRESS));
+  Serial.print("VERSION_ADDRESS: ");
+  Serial.println(EEPROM.read(VERSION_ADDRESS));
+  Serial.print("UNIT_ADDRESS: ");
+  Serial.println(EEPROM.read(UNIT_ADDRESS));
+  Serial.print("PITCH_OFFSET_ADDRESS: ");
+  Serial.println(EEPROM.read(PITCH_OFFSET_ADDRESS));
+  Serial.print("ROLL_OFFSET_ADDRESS: ");
+  Serial.println(EEPROM.read(ROLL_OFFSET_ADDRESS));
+  Serial.print("MODE_ADDRESS: ");
+  Serial.println(EEPROM.read(MODE_ADDRESS));
 
   if (EEPROM.read(VERSION_ADDRESS) != VERSION) {
     factoryReset();
@@ -182,6 +185,7 @@ void loop() {
   buttonCheck();
 
   updateMinMaxAltitude();
+  saveMode();
 
   if (mode == INCLINE) {
     loopInclinometer();
@@ -200,17 +204,6 @@ void loop() {
   } else if (mode == MENU) {
     loopMenu();
   }
-
-  // Serial.print("VERSION_ADDRESS: ");
-  // Serial.println(EEPROM.read(VERSION_ADDRESS));
-  // Serial.print("UNIT_ADDRESS: ");
-  // Serial.println(EEPROM.read(UNIT_ADDRESS));
-  // Serial.print("PITCH_OFFSET_ADDRESS: ");
-  // Serial.println(EEPROM.read(PITCH_OFFSET_ADDRESS));
-  // Serial.print("ROLL_OFFSET_ADDRESS: ");
-  // Serial.println(EEPROM.read(ROLL_OFFSET_ADDRESS));
-
-  // delay(500);
 }
 
 
@@ -219,14 +212,20 @@ void loop() {
 ////////////
 
 void factoryReset() {
-  Serial.println("FACTORY RESET");
   EEPROM.write(UNIT_ADDRESS, 1);
   unit = 'i';
   EEPROM.write(PITCH_OFFSET_ADDRESS, 0);
   pitchOffset = 0;
   EEPROM.write(ROLL_OFFSET_ADDRESS, 0);
   rollOffset = 0;
+  EEPROM.write(MODE_ADDRESS, INCLINE);
+  mode = displayMenuItem = INCLINE;
   EEPROM.write(VERSION_ADDRESS, VERSION);
+}
+
+// Saves the current mode to EEPROM
+void saveMode() {
+  EEPROM.write(MODE_ADDRESS, mode);
 }
 
 void setupVariables() {
@@ -241,6 +240,9 @@ void setupVariables() {
   // Incline offsets
   pitchOffset = EEPROM.read(PITCH_OFFSET_ADDRESS);
   rollOffset = EEPROM.read(ROLL_OFFSET_ADDRESS);
+
+  // Menu
+  mode = displayMenuItem = EEPROM.read(MODE_ADDRESS);
 }
 
 void setupDisplay() {
