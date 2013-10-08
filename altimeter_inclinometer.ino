@@ -1,10 +1,8 @@
 #include <Wire.h>
-#include <SoftwareSerial.h>
+#include <LiquidCrystal.h>
 #include <EEPROM.h>
 
-SoftwareSerial lcd(3,2);
-
-const int VERSION = 2;
+const int VERSION = 1;
 const int VERSION_ADDRESS = 10;
 
 unsigned long millisCounter = 0;
@@ -20,7 +18,6 @@ const String menuText[][2] = {{"         Incline","                "},
                               {"     Temperature","                "},
                               {"             Set","      Brightness"},
                               {"         Factory","           Reset"}};
-const unsigned int MENU_LENGTH = 9;
 const unsigned int INCLINE = 0;
 const unsigned int ALTITUDE = 1;
 const unsigned int TRACK = 2;
@@ -31,6 +28,8 @@ const unsigned int TEMPERATURE = 6;
 const unsigned int BRIGHTNESS = 7;
 const unsigned int RESET = 8;
 const unsigned int MENU = 9;
+const unsigned int MENU_LENGTH = 9;
+
 // Keep track of where we are
 unsigned int mode;
 int displayMenuItem;
@@ -40,18 +39,18 @@ char unit;
 
 // Display character for brightness meter
 const unsigned int BLOCK_CHAR = 255;
-const unsigned int MAX_BRIGHTNESS = 157;
-const unsigned int MIN_BRIGHTNESS = 128;
-const unsigned int BRIGHTNESS_INCREMENT = 7;
-int unsigned brightness;
+const int MAX_BRIGHTNESS = 255;
+const int MIN_BRIGHTNESS = 1;
+const int BRIGHTNESS_INCREMENT = 32;
+int brightness;
 
 
 /////////////////////
 // Three-way button
 /////////////////////
-const unsigned int UP = 10;
-const unsigned int PUSH = 11;
-const unsigned int DOWN = 12;
+const unsigned int UP = 11;
+const unsigned int PUSH = 12;
+const unsigned int DOWN = 13;
 
 int unsigned lastState = 0;
 int unsigned buttonState = 0;
@@ -154,22 +153,58 @@ float maxAltitude;
 float metersToFeet = 3.28084;
 
 
-void setup() {
-  Serial.begin(9600);
 
+
+////////////////////
+// Display
+////////////////////
+
+// --- EEPROM ADDRESS DEFINITIONS
+const int LCD_BACKLIGHT_ADDRESS = 1;  // EEPROM address for backlight setting
+const int BAUD_ADDRESS = 2;           // EEPROM address for Baud rate setting
+const int SPLASH_SCREEN_ADDRESS = 3;  // EEPROM address for splash screen on/off
+const int ROWS_ADDRESS = 4;           // EEPROM address for number of rows
+const int COLUMNS_ADDRESS = 5;        // EEPROM address for number of columns
+
+// --- SPECIAL COMMAND DEFINITIONS
+const int BACKLIGHT_COMMAND = 128;    // 0x80
+const int SPECIAL_COMMAND = 254;      // 0xFE
+const int BAUD_COMMAND = 129;         // 0x81
+
+// --- ARDUINO PIN DEFINITIONS
+uint8_t RSPin = 2;
+uint8_t RWPin = 3;
+uint8_t ENPin = 4;
+uint8_t D4Pin = 5;
+uint8_t D5Pin = 6;
+uint8_t D6Pin = 7;
+uint8_t D7Pin = 8;
+uint8_t BLPin = 9;
+
+char inKey;                     // Character received from serial input
+uint8_t Cursor = 0;             // Position of cursor, 0 is top left, (rows*columns)-1 is bottom right
+uint8_t LCDOnOff = 1;           // 0 if LCD is off
+uint8_t blinky = 0;             // Is 1 if blinky cursor is on
+uint8_t underline = 0;          // Is 1 if underline cursor is on
+uint8_t splashScreenEnable = 1; // 1 means splash screen is enabled
+uint8_t rows = 2;               // Number rows, will be either 2 or 4
+uint8_t columns = 16;           // Number of columns, will be 16 or 20
+uint8_t characters;             // rows * columns
+
+// initialize the LCD at pins defined above
+LiquidCrystal lcd(RSPin, RWPin, ENPin, D4Pin, D5Pin, D6Pin, D7Pin);
+
+
+
+
+void setup() {
+  // Serial.begin(9600);
+
+  // Use 3.3v as our analog reference since that's what our
+  // altimeter outputs as a max
   analogReference(EXTERNAL);
 
-  Serial.print("VERSION_ADDRESS: ");
-  Serial.println(EEPROM.read(VERSION_ADDRESS));
-  Serial.print("UNIT_ADDRESS: ");
-  Serial.println(EEPROM.read(UNIT_ADDRESS));
-  Serial.print("PITCH_OFFSET_ADDRESS: ");
-  Serial.println(EEPROM.read(PITCH_OFFSET_ADDRESS));
-  Serial.print("ROLL_OFFSET_ADDRESS: ");
-  Serial.println(EEPROM.read(ROLL_OFFSET_ADDRESS));
-  Serial.print("MODE_ADDRESS: ");
-  Serial.println(EEPROM.read(MODE_ADDRESS));
-
+  // Set EEPROM variables if the version changes
   if (EEPROM.read(VERSION_ADDRESS) != VERSION) {
     factoryReset();
   }
@@ -182,9 +217,10 @@ void setup() {
 }
 
 void loop() {
+
   buttonCheck();
 
-  updateMinMaxAltitude();
+  // updateMinMaxAltitude();
   saveMode();
 
   if (mode == INCLINE) {
@@ -246,19 +282,23 @@ void setupVariables() {
 }
 
 void setupDisplay() {
-  lcd.begin(9600);
+  lcd.begin(16, 2);
 
-  // set brightness
-  brightness = MAX_BRIGHTNESS;
+  // Set up the backlight
+  pinMode(BLPin, OUTPUT);
+  brightness = EEPROM.read(LCD_BACKLIGHT_ADDRESS);
+  // setBacklight(EEPROM.read(LCD_BACKLIGHT_ADDRESS));
   setBrightness();
 
-  clearDisplay();
-  moveToFirstLine();
-
-  lcd.write(" CameronTech.io ");
-  lcd.write("  Inclinometer  ");
-
-  delay(1000);
+  // Splash screen
+  lcd.print("  Cameron Tech  ");
+  delay(2000);
+  lcd.clear();
+  lcd.print(" Inclinometer & ");
+  moveToSecondLine();
+  lcd.print("   Altimeter    ");
+  delay(2000);
+  lcd.clear();
 }
 
 
@@ -351,6 +391,7 @@ void buttonClick() {
       } else if (buttonState == DOWN) {
         decreaseBrightness();
       } else {
+        saveBrightness();
         mode = MENU;
       }
     } else {                  // when not in calibrate mode, up/down goes to menu, push is optional function
@@ -384,8 +425,9 @@ void startMode() {
 
 void loopMenu() {
   if (millis() - millisCounter > 250) {
-    moveToFirstLine();
+    lcd.clear();
     lcd.print(menuText[displayMenuItem][0]);
+    moveToSecondLine();
     lcd.print(menuText[displayMenuItem][1]);
 
     resetCounter();
@@ -443,7 +485,6 @@ void loopInclinometer() {
     // int correctedPitch = map(pitch, 0, 360, -180, 180);
     // int correctedRoll = map(roll, 0, 360, -180, 180);
 
-
     // write the pitch and roll to the second line
     displayIncline(pitch, roll);
 
@@ -457,6 +498,7 @@ void loopAltimeter() {
 
     moveToFirstLine();
     lcd.print("    Altitude    ");
+    moveToSecondLine();
     outputAltitudeLine(false, NULL);
 
     resetCounter();
@@ -467,6 +509,7 @@ void loopTrack() {
   if (millis() - millisCounter > 1000) {
     moveToFirstLine();
     lcd.print(" Track Altitude ");
+    moveToSecondLine();
     outputAltitudeLine(true, NULL);
 
     resetCounter();
@@ -477,6 +520,7 @@ void loopMinMax() {
   if (millis() - millisCounter > 1000) {
     moveToFirstLine();
     lcd.print("   Min    Max   ");
+    moveToSecondLine();
 
     // Output minimum altitude
     int beforeMin = center(altitudeWidth(minAltitude), 8) / 16;
@@ -512,6 +556,8 @@ void loopCalibrate() {
   if (millis() - millisCounter > 250) {
     moveToFirstLine();
     lcd.print("Current Altitude");
+    moveToSecondLine();
+
     if (calibrateAltitudeDisplay == NULL) {
       calibrateAltitudeDisplay = getAltitude();
     }
@@ -524,6 +570,8 @@ void loopTemperature() {
   if (millis() - millisCounter > 1000) {
     moveToFirstLine();
     lcd.print("  Temperature   ");
+    moveToSecondLine();
+
     temperature = bmp085GetTemperature(bmp085ReadUT());
 
     lcd.print("     ");
@@ -547,7 +595,9 @@ void loopBrightness() {
 
     moveToFirstLine();
     lcd.print("   Brightness   ");
-    int unsigned dots = map(brightness, 128, 157, 1, 16);
+    moveToSecondLine();
+
+    int unsigned dots = map(brightness, MIN_BRIGHTNESS, MAX_BRIGHTNESS, 1, 16);
     for (int i=0; i<dots; i++) {
       lcd.write(BLOCK_CHAR);
     }
@@ -601,35 +651,24 @@ void resetMinMaxCounter() {
 // Display functions
 //////////////////////////////
 
-void clearDisplay() {
-  moveToFirstLine();
-  lcd.write("                ");
-  lcd.write("                ");
+void moveToFirstLine() {
+  lcd.setCursor(0,0);
 }
 
-void moveToFirstLine() {
-  lcd.write(254);
-  lcd.write(128);
-}
 
 void moveToSecondLine() {
-  lcd.write(254);
-  lcd.write(192);
+  lcd.setCursor(0,1);
 }
 
-void increaseBrightness() {
-  // Only increase the brightness by one point if already completely dark
-  if (brightness == MIN_BRIGHTNESS) {
-    brightness += 1;
-  } else {
-    brightness += BRIGHTNESS_INCREMENT;
-  }
 
+void increaseBrightness() {
+  brightness += BRIGHTNESS_INCREMENT;
   if (brightness > MAX_BRIGHTNESS) {
     brightness = MAX_BRIGHTNESS;
   }
   setBrightness();
 }
+
 
 void decreaseBrightness() {
   brightness -= BRIGHTNESS_INCREMENT;
@@ -639,10 +678,15 @@ void decreaseBrightness() {
   setBrightness();
 }
 
+
 void setBrightness() {
-  lcd.write(124);
-  lcd.write(brightness);
-  delay(100);
+  analogWrite(BLPin, brightness);
+  // EEPROM.write(LCD_BACKLIGHT_ADDRESS, brightness);
+}
+
+
+void saveBrightness() {
+  EEPROM.write(LCD_BACKLIGHT_ADDRESS, brightness);
 }
 
 
@@ -664,6 +708,7 @@ void displayIncline(int first, int second) {
   // Move to the start of the second line
   moveToFirstLine();
   lcd.print("  Pitch   Roll  ");
+  moveToSecondLine();
 
   // convert int values to strings for output
   String firstString = String(first);
@@ -770,6 +815,7 @@ float getAltitude() {
 // Write an entire line with the altitude centered on the line
 void outputAltitudeLine(bool includeTrackingOffset, float overrideAltitude) {
   float altitude;
+  moveToSecondLine();
 
   if (overrideAltitude == NULL) {
     altitude = getAltitude();
@@ -780,11 +826,6 @@ void outputAltitudeLine(bool includeTrackingOffset, float overrideAltitude) {
   if (includeTrackingOffset) {
     altitude -= trackingAltitudeOffset;
   }
-
-  Serial.println("outputAltitudeLine()");
-  Serial.print("altitude: ");
-  Serial.println(altitude);
-  Serial.println("");
 
   // pad with some white space
   int before = center(altitudeWidth(altitude), 16) / 16;
@@ -800,6 +841,7 @@ void outputAltitudeLine(bool includeTrackingOffset, float overrideAltitude) {
     lcd.print(" ");
   }
 }
+
 
 // Write the only the altitude to the screen
 void displayAltitudeWithUnit(float altitude) {
@@ -822,40 +864,6 @@ void displayAltitudeWithUnit(float altitude) {
   lcd.print(num, decimals);
   lcd.print(unitChar);
 }
-
-
-// // White space to the left of an altitude line
-// int calculateAltitudeBeforePadding(float altitude) {
-//   int altitudeChars = altitudeWidth(altitude);
-//   int whiteSpaces = 16 - altitudeChars;
-
-//   Serial.println("calculateAltitudeBeforePadding()");
-//   Serial.print("altitudeChars:");
-//   Serial.println(altitudeChars);
-
-//   Serial.print("altitude:");
-//   Serial.println(altitude);
-
-//   Serial.print("whiteSpaces:");
-//   Serial.println(whiteSpaces / 2);
-
-//   return whiteSpaces / 2;
-// }
-
-
-// // White space to the right of an altitude line
-// int calculateAltitudeAfterPadding(float altitude) {
-//   int altitudeChars = altitudeWidth(altitude);
-//   int whiteSpaces = 16 - altitudeChars;
-
-//   Serial.println("calculateAltitudeAfterPadding()");
-//   Serial.print("altitudeChars:");
-//   Serial.println(altitudeChars);
-//   Serial.print("whiteSpaces:");
-//   Serial.println((whiteSpaces / 2) + (whiteSpaces % 2));
-
-//   return (whiteSpaces / 2) + (whiteSpaces % 2);
-// }
 
 
 // Width of altitude itself (including unit)
@@ -889,6 +897,7 @@ void incrementAltimeterCalibration() {
   }
 }
 
+
 // Decrements the altitude calibration offset
 void decrementAltimeterCalibration() {
   if (unit == 'i') {
@@ -898,11 +907,13 @@ void decrementAltimeterCalibration() {
   }
 }
 
+
 // Restarts the calibration process
 void startCalibration() {
   calibrateAltitudeDisplay = getAltitude() + calibrateAltitudeOffset;
   calibrateAltitudeOffset = 0;
 }
+
 
 // Save the calibration offset
 void saveCalibration() {
@@ -935,6 +946,7 @@ void bmp085Calibration() {
   md = bmp085ReadInt(0xBE);
 }
 
+
 // Calculate temperature given ut.
 // Value returned will be in units of 0.1 deg C
 short bmp085GetTemperature(unsigned int ut) {
@@ -946,6 +958,7 @@ short bmp085GetTemperature(unsigned int ut) {
 
   return ((b5 + 8)>>4);
 }
+
 
 // Calculate pressure given up
 // calibration values must be known
@@ -982,6 +995,7 @@ long bmp085GetPressure(unsigned long up) {
   return p;
 }
 
+
 // Read 1 byte from the BMP085 at 'address'
 char bmp085Read(unsigned char address) {
   unsigned char data;
@@ -996,6 +1010,7 @@ char bmp085Read(unsigned char address) {
 
   return Wire.read();
 }
+
 
 // Read 2 bytes from the BMP085
 // First byte will be from 'address'
@@ -1016,6 +1031,7 @@ int bmp085ReadInt(unsigned char address) {
   return (int) msb<<8 | lsb;
 }
 
+
 // Read the uncompensated temperature value
 unsigned int bmp085ReadUT() {
   unsigned int ut;
@@ -1034,6 +1050,7 @@ unsigned int bmp085ReadUT() {
   ut = bmp085ReadInt(0xF6);
   return ut;
 }
+
 
 // Read the uncompensated pressure value
 unsigned long bmp085ReadUP() {
