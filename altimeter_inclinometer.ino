@@ -3,7 +3,6 @@
 #include <EEPROM.h>
 
 const int VERSION = 1;
-const int VERSION_ADDRESS = 10;
 
 unsigned long millisCounter = 0;
 unsigned long minMaxAltitudeMillsCounter = 0;
@@ -48,9 +47,9 @@ int brightness;
 /////////////////////
 // Three-way button
 /////////////////////
-const unsigned int UP = 11;
-const unsigned int PUSH = 12;
-const unsigned int DOWN = 13;
+const unsigned int UP = 10;
+const unsigned int PUSH = 11;
+const unsigned int DOWN = 12;
 
 int unsigned lastState = 0;
 int unsigned buttonState = 0;
@@ -100,11 +99,6 @@ int pitchOffset, rollOffset;
 
 // ASCII character for degree symbol
 const unsigned int DEGREE_CHAR = 223;
-
-const int UNIT_ADDRESS = 11;
-const int PITCH_OFFSET_ADDRESS = 12;
-const int ROLL_OFFSET_ADDRESS = 13;
-const int MODE_ADDRESS = 14;
 
 
 //////////////////////
@@ -159,13 +153,6 @@ float metersToFeet = 3.28084;
 // Display
 ////////////////////
 
-// --- EEPROM ADDRESS DEFINITIONS
-const int LCD_BACKLIGHT_ADDRESS = 1;  // EEPROM address for backlight setting
-const int BAUD_ADDRESS = 2;           // EEPROM address for Baud rate setting
-const int SPLASH_SCREEN_ADDRESS = 3;  // EEPROM address for splash screen on/off
-const int ROWS_ADDRESS = 4;           // EEPROM address for number of rows
-const int COLUMNS_ADDRESS = 5;        // EEPROM address for number of columns
-
 // --- SPECIAL COMMAND DEFINITIONS
 const int BACKLIGHT_COMMAND = 128;    // 0x80
 const int SPECIAL_COMMAND = 254;      // 0xFE
@@ -196,9 +183,26 @@ LiquidCrystal lcd(RSPin, RWPin, ENPin, D4Pin, D5Pin, D6Pin, D7Pin);
 
 
 
+// EEPROM memory addresses
+
+// display
+const int LCD_BACKLIGHT_ADDRESS = 1;  // backlight setting
+const int BAUD_ADDRESS = 2;           // Baud rate setting
+const int SPLASH_SCREEN_ADDRESS = 3;  // splash screen on/off
+const int ROWS_ADDRESS = 4;           // number of rows
+const int COLUMNS_ADDRESS = 5;        // number of columns
+
+const int VERSION_ADDRESS = 10;
+const int UNIT_ADDRESS = 11;
+const int PITCH_OFFSET_ADDRESS = 12;
+const int ROLL_OFFSET_ADDRESS = 13;
+const int MODE_ADDRESS = 14;
+//const int CALIBRATE_ALTITUDE_OFFSET_ADDRESS = 16;
+//const int TRACKING_ALTITUDE_OFFSET_ADDRESS = 32;
+
 
 void setup() {
-  // Serial.begin(9600);
+  //Serial.begin(9600);
 
   // Use 3.3v as our analog reference since that's what our
   // altimeter outputs as a max
@@ -249,13 +253,12 @@ void loop() {
 
 void factoryReset() {
   EEPROM.write(UNIT_ADDRESS, 1);
-  unit = 'i';
   EEPROM.write(PITCH_OFFSET_ADDRESS, 0);
-  pitchOffset = 0;
   EEPROM.write(ROLL_OFFSET_ADDRESS, 0);
-  rollOffset = 0;
   EEPROM.write(MODE_ADDRESS, INCLINE);
-  mode = displayMenuItem = INCLINE;
+  //EEPROM.write(CALIBRATE_ALTITUDE_OFFSET_ADDRESS, 0);
+  //EEPROM.write(TRACKING_ALTITUDE_OFFSET_ADDRESS, 0);
+
   EEPROM.write(VERSION_ADDRESS, VERSION);
 }
 
@@ -266,19 +269,19 @@ void saveMode() {
 
 void setupVariables() {
 
-  // Units
   if (EEPROM.read(UNIT_ADDRESS) == 0) {
     unit = 'm';
   } else {
     unit = 'i';
   }
 
-  // Incline offsets
   pitchOffset = EEPROM.read(PITCH_OFFSET_ADDRESS);
   rollOffset = EEPROM.read(ROLL_OFFSET_ADDRESS);
-
-  // Menu
   mode = displayMenuItem = EEPROM.read(MODE_ADDRESS);
+  //calibrateAltitudeOffset = EEPROM.read(CALIBRATE_ALTITUDE_OFFSET_ADDRESS) / 10.0;
+  //calibrateAltitudeDisplay = getAltitude() - calibrateAltitudeOffset;
+  //trackingAltitudeOffset = EEPROM.read(TRACKING_ALTITUDE_OFFSET_ADDRESS) / 10.0;
+
 }
 
 void setupDisplay() {
@@ -367,8 +370,7 @@ void buttonClick() {
         displayMenuItem = INCLINE;
       } else if (displayMenuItem == RESET) {  // Factory Reset feature
         factoryReset();
-        mode = INCLINE;
-        displayMenuItem = INCLINE;
+        setupVariables();
       } else{
         mode = displayMenuItem;               // select menu item
         startMode();
@@ -381,7 +383,7 @@ void buttonClick() {
       } else if (buttonState == DOWN) {
         decrementAltimeterCalibration();
       } else if (buttonState == PUSH) {
-        saveCalibration();
+        saveAltitudeCalibration();
         displayMenuItem = ALTITUDE;
         mode = ALTITUDE;
       }
@@ -766,6 +768,7 @@ void displayIncline(int first, int second) {
 // Zeros out the tracking altitude
 void resetTrackingAltitude() {
   trackingAltitudeOffset = getAltitude() + calibrateAltitudeOffset;
+  // EEPROM.write(TRACKING_ALTITUDE_OFFSET_ADDRESS, trackingAltitudeOffset * 10);
 }
 
 
@@ -916,10 +919,13 @@ void startCalibration() {
 
 
 // Save the calibration offset
-void saveCalibration() {
+void saveAltitudeCalibration() {
   // Reset to 0 so we get a raw altitude reading from scratch
   calibrateAltitudeOffset = 0;
   calibrateAltitudeOffset = calibrateAltitudeDisplay - getAltitude();
+  //Serial.print("calibrateAltitudeOffset: ");
+  //Serial.println(calibrateAltitudeOffset);
+  //EEPROM.write(CALIBRATE_ALTITUDE_OFFSET_ADDRESS, calibrateAltitudeOffset * 10);
 }
 
 
