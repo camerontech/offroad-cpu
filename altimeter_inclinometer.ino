@@ -47,9 +47,9 @@ int brightness;
 /////////////////////
 // Three-way button
 /////////////////////
-const unsigned int UP = 10;
+const unsigned int UP = 12;
 const unsigned int PUSH = 11;
-const unsigned int DOWN = 12;
+const unsigned int DOWN = 10;
 
 int unsigned lastState = 0;
 int unsigned buttonState = 0;
@@ -159,8 +159,8 @@ const int SPECIAL_COMMAND = 254;      // 0xFE
 const int BAUD_COMMAND = 129;         // 0x81
 
 // --- ARDUINO PIN DEFINITIONS
-uint8_t RSPin = 2;
-uint8_t RWPin = 3;
+uint8_t RSPin = 0;
+uint8_t RWPin = 1;
 uint8_t ENPin = 4;
 uint8_t D4Pin = 5;
 uint8_t D5Pin = 6;
