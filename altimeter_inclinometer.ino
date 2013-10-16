@@ -1,6 +1,10 @@
 #include <Wire.h>
 #include <LiquidCrystal.h>
 #include <EEPROM.h>
+#include <I2Cdev.h>
+#include <BMP085.h>
+#include <ADXL345.h>
+
 
 const int VERSION = 1;
 
@@ -8,15 +12,15 @@ unsigned long millisCounter = 0;
 unsigned long minMaxAltitudeMillsCounter = 0;
 
 // Menu and display modes
-const String menuText[][2] = {{"         Incline","                "},
-                              {"        Altitude","                "},
-                              {"           Track","        Altitude"},
-                              {"         Min/Max","        Altitude"},
-                              {"       Calibrate","        Altitude"},
-                              {"            Zero","         Incline"},
-                              {"     Temperature","                "},
-                              {"             Set","      Brightness"},
-                              {"         Factory","           Reset"}};
+const String menuText[][2] = {{"Incline        ","               "},
+                              {"Altitude       ","               "},
+                              {"Track          ","Altitude       "},
+                              {"Min/Max        ","Altitude       "},
+                              {"Calibrate      ","Altitude       "},
+                              {"Zero           ","Incline        "},
+                              {"Temperature    ","               "},
+                              {"Set            ","Brightness     "},
+                              {"Factory        ","Reset          "}};
 const unsigned int INCLINE = 0;
 const unsigned int ALTITUDE = 1;
 const unsigned int TRACK = 2;
@@ -59,78 +63,30 @@ int unsigned buttonState = 0;
 // Altimeter
 //////////////////////
 
-// analog input pins
-const unsigned int X_PIN = A0;
-const unsigned int Y_PIN = A1;
-const unsigned int Z_PIN = A2;
+ADXL345 accel;
 
-// max/min analog values
-
-// Duemilanove
-// xMax:753 xMin:234 yMax:784 yMin:266 zMax:743 zMin:221
-// const int X_MIN = 234;
-// const int X_MAX = 753;
-// const int Y_MIN = 266;
-// const int Y_MAX = 784;
-// const int Z_MIN = 221;
-// const int Z_MAX = 743;
-
-// Leonardo
-// xMax:732 xMin:239 yMax:775 yMin:271 zMax:732 zMin:238
-// const int X_MIN = 284;
-// const int X_MAX = 778;
-// const int Y_MIN = 308;
-// const int Y_MAX = 815;
-// const int Z_MIN = 247;
-// const int Z_MAX = 753;
-
-// Uno
-// xMax:738 xMin:230 yMax:767 yMin:255 zMax:781 zMin:271
-const unsigned int X_MAX = 741;
-const unsigned int X_MIN = 223;
-const unsigned int Y_MAX = 768;
-const unsigned int Y_MIN = 255;
-const unsigned int Z_MAX = 802;
-const unsigned int Z_MIN = 280;
+const int X_MIN = -254;
+const int X_MAX = 269;
+const int Y_MIN = -248;
+const int Y_MAX = 261;
+const int Z_MIN = -283;
+const int Z_MAX = 235;
 
 // So that we can zero out the inclinometer readings
 int lastPitch, lastRoll;
 int pitchOffset, rollOffset;
-
-// ASCII character for degree symbol
-const unsigned int DEGREE_CHAR = 223;
 
 
 //////////////////////
 // Barometer
 //////////////////////
 
-const int BMP085_ADDRESS = 0x77;  // I2C address of BMP085
+BMP085 barometer;
+float temperature;
+float pressure;
+float altitude;
+int32_t lastMicros;
 
-const unsigned char OSS = 3;  // Oversampling Setting
-
-// Calibration values
-int ac1;
-int ac2;
-int ac3;
-unsigned int ac4;
-unsigned int ac5;
-unsigned int ac6;
-int b1;
-int b2;
-int mb;
-int mc;
-int md;
-
-// b5 is calculated in bmp085GetTemperature(...), this variable is also used in bmp085GetPressure(...)
-// so ...Temperature(...) must be called before ...Pressure(...).
-long b5;
-
-short temperature;
-long pressure;
-
-// Use these for altitude conversions
-const float p0 = 101325;     // Pressure at sea level (Pa)
 
 // User-defined offset based some something like GPS readings
 float calibrateAltitudeOffset = 0;
@@ -181,6 +137,54 @@ uint8_t characters;             // rows * columns
 // initialize the LCD at pins defined above
 LiquidCrystal lcd(RSPin, RWPin, ENPin, D4Pin, D5Pin, D6Pin, D7Pin);
 
+byte upArrow[8] = {
+  B00000,
+  B00100,
+  B01110,
+  B11111,
+  B00000,
+  B00000,
+  B00000,
+  B00000
+};
+
+byte downArrow[8] = {
+  B00000,
+  B00000,
+  B00000,
+  B00000,
+  B11111,
+  B01110,
+  B00100,
+  B00000
+};
+
+byte degree[8] = {
+  B01100,
+  B10010,
+  B10010,
+  B01100,
+  B00000,
+  B00000,
+  B00000,
+  B00000
+};
+
+byte foot[8] = {
+  B01000,
+  B01000,
+  B00000,
+  B00000,
+  B00000,
+  B00000,
+  B00000,
+  B00000
+};
+
+byte UP_ARROW = 0;
+byte DOWN_ARROW = 1;
+byte DEGREE = 2;
+byte FOOT = 3;
 
 
 // EEPROM memory addresses
@@ -192,6 +196,7 @@ const int SPLASH_SCREEN_ADDRESS = 3;  // splash screen on/off
 const int ROWS_ADDRESS = 4;           // number of rows
 const int COLUMNS_ADDRESS = 5;        // number of columns
 
+// sensors
 const int VERSION_ADDRESS = 10;
 const int UNIT_ADDRESS = 11;
 const int PITCH_OFFSET_ADDRESS = 12;
@@ -202,16 +207,14 @@ const int MODE_ADDRESS = 14;
 
 
 void setup() {
-  //Serial.begin(9600);
-
-  // Use 3.3v as our analog reference since that's what our
-  // altimeter outputs as a max
   analogReference(EXTERNAL);
 
   // Set EEPROM variables if the version changes
   if (EEPROM.read(VERSION_ADDRESS) != VERSION) {
     factoryReset();
   }
+
+  Wire.begin();
 
   setupVariables();
   setupDisplay();
@@ -224,7 +227,7 @@ void loop() {
 
   buttonCheck();
 
-  // updateMinMaxAltitude();
+  updateMinMaxAltitude();
   saveMode();
 
   if (mode == INCLINE) {
@@ -287,6 +290,12 @@ void setupVariables() {
 void setupDisplay() {
   lcd.begin(16, 2);
 
+  // custom characters
+  lcd.createChar(0, upArrow);
+  lcd.createChar(1, downArrow);
+  lcd.createChar(2, degree);
+  lcd.createChar(3, foot);
+
   // Set up the backlight
   pinMode(BLPin, OUTPUT);
   brightness = EEPROM.read(LCD_BACKLIGHT_ADDRESS);
@@ -294,12 +303,10 @@ void setupDisplay() {
   setBrightness();
 
   // Splash screen
-  lcd.print("  Cameron Tech  ");
-  delay(2000);
   lcd.clear();
-  lcd.print(" Inclinometer & ");
+  lcd.print("  Cameron Tech  ");
   moveToSecondLine();
-  lcd.print("   Altimeter    ");
+  lcd.print("  Offroad CPU   ");
   delay(2000);
   lcd.clear();
 }
@@ -318,12 +325,12 @@ void setupButton() {
 
 
 void setupAccelerometer() {
+  accel.initialize();
 }
 
 
 void setupBarometer() {
-  Wire.begin();
-  bmp085Calibration();
+  barometer.initialize();
   resetMinMaxAltitude();
 }
 
@@ -429,8 +436,10 @@ void loopMenu() {
   if (millis() - millisCounter > 250) {
     lcd.clear();
     lcd.print(menuText[displayMenuItem][0]);
+    lcd.write(UP_ARROW);
     moveToSecondLine();
     lcd.print(menuText[displayMenuItem][1]);
+    lcd.write(DOWN_ARROW);
 
     resetCounter();
   }
@@ -439,13 +448,8 @@ void loopMenu() {
 void loopInclinometer() {
   if (millis() - millisCounter > 250) {
 
-    // sample the voltages
-    delay(10);
-    int unsigned x = analogRead(X_PIN);
-    delay(10);
-    int unsigned y = analogRead(Y_PIN);
-    delay(10);
-    int unsigned z = analogRead(Z_PIN);
+    int x, y, z;
+    accel.getAcceleration(&x, &y, &z);
 
     // convert to range of -90 to +90 degrees
     int xAng = map(x, X_MIN, X_MAX, -90, 90);
@@ -484,11 +488,8 @@ void loopInclinometer() {
       roll -= 360;
     }
 
-    // int correctedPitch = map(pitch, 0, 360, -180, 180);
-    // int correctedRoll = map(roll, 0, 360, -180, 180);
-
     // write the pitch and roll to the second line
-    displayIncline(pitch, roll);
+    displayIncline(roll, pitch);
 
     resetCounter();
   }
@@ -564,6 +565,7 @@ void loopCalibrate() {
       calibrateAltitudeDisplay = getAltitude();
     }
     outputAltitudeLine(false, calibrateAltitudeDisplay);
+    lcd.write(DOWN_ARROW);
     resetCounter();
   }
 }
@@ -574,17 +576,17 @@ void loopTemperature() {
     lcd.print("  Temperature   ");
     moveToSecondLine();
 
-    temperature = bmp085GetTemperature(bmp085ReadUT());
+    float temperature = getTemperature();
 
     lcd.print("     ");
 
     if (unit == 'i') {
-      lcd.print(temperature*0.18+32,1);
-      lcd.write(DEGREE_CHAR);
+      lcd.print(temperature*9/5+32,1);
+      lcd.write(DEGREE);
       lcd.write("F");
     } else {
-      lcd.print(temperature/10.0,1);
-      lcd.write(DEGREE_CHAR);
+      lcd.print(temperature,1);
+      lcd.write(DEGREE);
       lcd.write("C");
     }
     lcd.print("      ");
@@ -728,7 +730,7 @@ void displayIncline(int first, int second) {
 
   // write pitch value
   lcd.print(output);
-  lcd.write(DEGREE_CHAR);
+  lcd.write(DEGREE);
 
   int outputLength = output.length() + 1;
 
@@ -747,7 +749,7 @@ void displayIncline(int first, int second) {
 
   // pad spaces before roll value
   lcd.print(output);
-  lcd.write(DEGREE_CHAR);
+  lcd.write(DEGREE);
 
   outputLength += output.length() + 1;
 
@@ -807,11 +809,30 @@ void switchUnit() {
 }
 
 
+float getTemperature() {
+  barometer.setControl(BMP085_MODE_TEMPERATURE);
+
+  lastMicros = micros();
+  while (micros() - lastMicros < barometer.getMeasureDelayMicroseconds());
+
+  return barometer.getTemperatureC();
+}
+
+
 // Gets the current altitude
 float getAltitude() {
-  temperature = bmp085GetTemperature(bmp085ReadUT());
-  pressure = bmp085GetPressure(bmp085ReadUP());
-  return (float)44330 * (1 - pow(((float) pressure/p0), 0.190295));
+  // Have to read temperature before getting pressure
+  getTemperature();
+
+  // request pressure (3x oversampling mode, high detail, 23.5ms delay)
+  barometer.setControl(BMP085_MODE_PRESSURE_3);
+
+  lastMicros = micros();
+  while (micros() - lastMicros < barometer.getMeasureDelayMicroseconds());
+
+  float pressure = barometer.getPressure();
+
+  return barometer.getAltitude(pressure);
 }
 
 
@@ -856,7 +877,8 @@ void displayAltitudeWithUnit(float altitude) {
   if (unit == 'i') {
     int intAltitude = round(calibratedAltitude * metersToFeet);
     num = round(calibratedAltitude * metersToFeet);
-    unitChar = '\'';
+    // unitChar = '\'';
+    unitChar = 3;
     decimals = 0;
   } else {
     num = round(calibratedAltitude * 10) / 10.0;
@@ -865,7 +887,7 @@ void displayAltitudeWithUnit(float altitude) {
   }
 
   lcd.print(num, decimals);
-  lcd.print(unitChar);
+  lcd.write(unitChar);
 }
 
 
@@ -926,167 +948,4 @@ void saveAltitudeCalibration() {
   //Serial.print("calibrateAltitudeOffset: ");
   //Serial.println(calibrateAltitudeOffset);
   //EEPROM.write(CALIBRATE_ALTITUDE_OFFSET_ADDRESS, calibrateAltitudeOffset * 10);
-}
-
-
-
-
-///////////////////////
-// Raw barometer functions
-///////////////////////
-
-// Stores all of the bmp085's calibration values into global variables
-// Calibration values are required to calculate temp and pressure
-// This function should be called at the beginning of the program
-void bmp085Calibration() {
-  ac1 = bmp085ReadInt(0xAA);
-  ac2 = bmp085ReadInt(0xAC);
-  ac3 = bmp085ReadInt(0xAE);
-  ac4 = bmp085ReadInt(0xB0);
-  ac5 = bmp085ReadInt(0xB2);
-  ac6 = bmp085ReadInt(0xB4);
-  b1 = bmp085ReadInt(0xB6);
-  b2 = bmp085ReadInt(0xB8);
-  mb = bmp085ReadInt(0xBA);
-  mc = bmp085ReadInt(0xBC);
-  md = bmp085ReadInt(0xBE);
-}
-
-
-// Calculate temperature given ut.
-// Value returned will be in units of 0.1 deg C
-short bmp085GetTemperature(unsigned int ut) {
-  long x1, x2;
-
-  x1 = (((long)ut - (long)ac6)*(long)ac5) >> 15;
-  x2 = ((long)mc << 11)/(x1 + md);
-  b5 = x1 + x2;
-
-  return ((b5 + 8)>>4);
-}
-
-
-// Calculate pressure given up
-// calibration values must be known
-// b5 is also required so bmp085GetTemperature(...) must be called first.
-// Value returned will be pressure in units of Pa.
-long bmp085GetPressure(unsigned long up) {
-  long x1, x2, x3, b3, b6, p;
-  unsigned long b4, b7;
-
-  b6 = b5 - 4000;
-  // Calculate B3
-  x1 = (b2 * (b6 * b6)>>12)>>11;
-  x2 = (ac2 * b6)>>11;
-  x3 = x1 + x2;
-  b3 = (((((long)ac1)*4 + x3)<<OSS) + 2)>>2;
-
-  // Calculate B4
-  x1 = (ac3 * b6)>>13;
-  x2 = (b1 * ((b6 * b6)>>12))>>16;
-  x3 = ((x1 + x2) + 2)>>2;
-  b4 = (ac4 * (unsigned long)(x3 + 32768))>>15;
-
-  b7 = ((unsigned long)(up - b3) * (50000>>OSS));
-  if (b7 < 0x80000000)
-    p = (b7<<1)/b4;
-  else
-    p = (b7/b4)<<1;
-
-  x1 = (p>>8) * (p>>8);
-  x1 = (x1 * 3038)>>16;
-  x2 = (-7357 * p)>>16;
-  p += (x1 + x2 + 3791)>>4;
-
-  return p;
-}
-
-
-// Read 1 byte from the BMP085 at 'address'
-char bmp085Read(unsigned char address) {
-  unsigned char data;
-
-  Wire.beginTransmission(BMP085_ADDRESS);
-  Wire.write(address);
-  Wire.endTransmission();
-
-  Wire.requestFrom(BMP085_ADDRESS, 1);
-  while(!Wire.available())
-    ;
-
-  return Wire.read();
-}
-
-
-// Read 2 bytes from the BMP085
-// First byte will be from 'address'
-// Second byte will be from 'address'+1
-int bmp085ReadInt(unsigned char address) {
-  unsigned char msb, lsb;
-
-  Wire.beginTransmission(BMP085_ADDRESS);
-  Wire.write(address);
-  Wire.endTransmission();
-
-  Wire.requestFrom(BMP085_ADDRESS, 2);
-  while(Wire.available()<2)
-    ;
-  msb = Wire.read();
-  lsb = Wire.read();
-
-  return (int) msb<<8 | lsb;
-}
-
-
-// Read the uncompensated temperature value
-unsigned int bmp085ReadUT() {
-  unsigned int ut;
-
-  // Write 0x2E into Register 0xF4
-  // This requests a temperature reading
-  Wire.beginTransmission(BMP085_ADDRESS);
-  Wire.write(0xF4);
-  Wire.write(0x2E);
-  Wire.endTransmission();
-
-  // Wait at least 4.5ms
-  delay(5);
-
-  // Read two bytes from registers 0xF6 and 0xF7
-  ut = bmp085ReadInt(0xF6);
-  return ut;
-}
-
-
-// Read the uncompensated pressure value
-unsigned long bmp085ReadUP() {
-  unsigned char msb, lsb, xlsb;
-  unsigned long up = 0;
-
-  // Write 0x34+(OSS<<6) into register 0xF4
-  // Request a pressure reading w/ oversampling setting
-  Wire.beginTransmission(BMP085_ADDRESS);
-  Wire.write(0xF4);
-  Wire.write(0x34 + (OSS<<6));
-  Wire.endTransmission();
-
-  // Wait for conversion, delay time dependent on OSS
-  delay(2 + (3<<OSS));
-
-  // Read register 0xF6 (MSB), 0xF7 (LSB), and 0xF8 (XLSB)
-  Wire.beginTransmission(BMP085_ADDRESS);
-  Wire.write(0xF6);
-  Wire.endTransmission();
-  Wire.requestFrom(BMP085_ADDRESS, 3);
-
-  // Wait for data to become available
-  while(Wire.available() < 3)
-    ;
-  msb = Wire.read();
-  lsb = Wire.read();
-  xlsb = Wire.read();
-
-  up = (((unsigned long) msb << 16) | ((unsigned long) lsb << 8) | (unsigned long) xlsb) >> (8-OSS);
-
-  return up;
 }
