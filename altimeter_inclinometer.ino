@@ -4,6 +4,7 @@
 #include <I2Cdev.h>
 #include <BMP085.h>
 #include <ADXL345.h>
+#include <HMC5883L.h>
 
 
 const int VERSION = 1;
@@ -14,28 +15,29 @@ unsigned long minMaxAltitudeMillsCounter = 0;
 // Menu and display modes
 const String menuText[][2] = {{"Incline        ","               "},
                               {"Altitude       ","               "},
+                              {"Compass        ","               "},
+                              {"Temperature    ","               "},
                               {"Track          ","Altitude       "},
                               {"Min/Max        ","Altitude       "},
                               {"Calibrate      ","Altitude       "},
-                              {"Zero           ","Incline        "},
-                              {"Temperature    ","               "},
                               {"Set            ","Brightness     "},
                               {"Factory        ","Reset          "}};
 const unsigned int INCLINE = 0;
 const unsigned int ALTITUDE = 1;
-const unsigned int TRACK = 2;
-const unsigned int MINMAX = 3;
-const unsigned int CALIBRATE = 4;
-const unsigned int ZERO = 5;
-const unsigned int TEMPERATURE = 6;
+const unsigned int COMPASS = 2;
+const unsigned int TEMPERATURE = 3;
+const unsigned int TRACK = 4;
+const unsigned int MINMAX = 5;
+const unsigned int CALIBRATE = 6;
 const unsigned int BRIGHTNESS = 7;
 const unsigned int RESET = 8;
 const unsigned int MENU = 9;
 const unsigned int MENU_LENGTH = 9;
 
 // Keep track of where we are
-unsigned int mode;
+int mode;
 int displayMenuItem;
+int lastMode;
 
 // Display in (m)etric or (i)mperial
 char unit;
@@ -73,7 +75,6 @@ const int Z_MIN = -283;
 const int Z_MAX = 235;
 
 // So that we can zero out the inclinometer readings
-int lastPitch, lastRoll;
 int pitchOffset, rollOffset;
 
 
@@ -102,6 +103,12 @@ float maxAltitude;
 // convert from meters to feet
 float metersToFeet = 3.28084;
 
+
+
+////////////////////
+// Magnetometer
+////////////////////
+HMC5883L mag;
 
 
 
@@ -181,10 +188,22 @@ byte foot[8] = {
   B00000
 };
 
+byte click[8] = {
+  B00000,
+  B00000,
+  B00100,
+  B01110,
+  B00100,
+  B00000,
+  B00000,
+  B00000
+};
+
 byte UP_ARROW = 0;
 byte DOWN_ARROW = 1;
 byte DEGREE = 2;
 byte FOOT = 3;
+byte CLICK = 4;
 
 
 // EEPROM memory addresses
@@ -203,7 +222,6 @@ const int PITCH_OFFSET_ADDRESS = 12;
 const int ROLL_OFFSET_ADDRESS = 13;
 const int MODE_ADDRESS = 14;
 //const int CALIBRATE_ALTITUDE_OFFSET_ADDRESS = 16;
-//const int TRACKING_ALTITUDE_OFFSET_ADDRESS = 32;
 
 
 void setup() {
@@ -221,6 +239,7 @@ void setup() {
   setupButton();
   setupAccelerometer();
   setupBarometer();
+  setupMagnetometer();
 }
 
 void loop() {
@@ -234,6 +253,8 @@ void loop() {
     loopInclinometer();
   } else if (mode == ALTITUDE) {
     loopAltimeter();
+  } else if (mode == COMPASS) {
+    loopCompass();
   } else if (mode == TRACK) {
     loopTrack();
   } else if (mode == MINMAX) {
@@ -260,7 +281,6 @@ void factoryReset() {
   EEPROM.write(ROLL_OFFSET_ADDRESS, 0);
   EEPROM.write(MODE_ADDRESS, INCLINE);
   //EEPROM.write(CALIBRATE_ALTITUDE_OFFSET_ADDRESS, 0);
-  //EEPROM.write(TRACKING_ALTITUDE_OFFSET_ADDRESS, 0);
 
   EEPROM.write(VERSION_ADDRESS, VERSION);
 }
@@ -283,7 +303,6 @@ void setupVariables() {
   mode = displayMenuItem = EEPROM.read(MODE_ADDRESS);
   //calibrateAltitudeOffset = EEPROM.read(CALIBRATE_ALTITUDE_OFFSET_ADDRESS) / 10.0;
   //calibrateAltitudeDisplay = getAltitude() - calibrateAltitudeOffset;
-  //trackingAltitudeOffset = EEPROM.read(TRACKING_ALTITUDE_OFFSET_ADDRESS) / 10.0;
 
 }
 
@@ -295,6 +314,7 @@ void setupDisplay() {
   lcd.createChar(1, downArrow);
   lcd.createChar(2, degree);
   lcd.createChar(3, foot);
+  lcd.createChar(4, click);
 
   // Set up the backlight
   pinMode(BLPin, OUTPUT);
@@ -335,6 +355,11 @@ void setupBarometer() {
 }
 
 
+void setupMagnetometer() {
+  mag.initialize();
+}
+
+
 void buttonCheck() {
   if (digitalRead(UP) == LOW) {
     buttonState = UP;
@@ -354,7 +379,7 @@ void buttonCheck() {
   }
 
   // debounce delay
-  delay(25);
+  delay(10);
 }
 
 
@@ -371,11 +396,7 @@ void buttonClick() {
         displayMenuItem = MENU_LENGTH - 1;
       }
     } else if (buttonState == PUSH) {
-      if (displayMenuItem == ZERO) {          // viewing the "zero incline" menu option
-        zeroInclinometer();
-        mode = INCLINE;
-        displayMenuItem = INCLINE;
-      } else if (displayMenuItem == RESET) {  // Factory Reset feature
+      if (displayMenuItem == RESET) {  // Factory Reset feature
         factoryReset();
         setupVariables();
       } else{
@@ -401,18 +422,21 @@ void buttonClick() {
         decreaseBrightness();
       } else {
         saveBrightness();
-        mode = MENU;
+        mode = lastMode;
+        displayMenuItem = lastMode;
       }
     } else {                  // when not in calibrate mode, up/down goes to menu, push is optional function
       if (buttonState == UP || buttonState == DOWN) {        // Button pressed up or down to go into the menu
+        lastMode = mode;
         mode = MENU;
       } else if (mode == TRACK && buttonState == PUSH) {     // Button clicked while tracking altitude
         resetTrackingAltitude();
       } else if (mode == MINMAX && buttonState == PUSH) {    // Button clicked while viewing min/max
         resetMinMaxAltitude();
       } else if (mode == ALTITUDE || mode == TEMPERATURE && buttonState == PUSH) { // Button clicked on altimeter
-        // Switch between meters and feet
         switchUnit();
+      } else if (mode == INCLINE && buttonState == PUSH) {   // Button clicked while viewing incline
+        zeroInclinometer();
       }
     }
   }
@@ -448,47 +472,13 @@ void loopMenu() {
 void loopInclinometer() {
   if (millis() - millisCounter > 250) {
 
-    int x, y, z;
-    accel.getAcceleration(&x, &y, &z);
+    moveToFirstLine();
+    lcd.print("  Pitch   Roll ");
+    lcd.write(CLICK);
+    moveToSecondLine();
 
-    // convert to range of -90 to +90 degrees
-    int xAng = map(x, X_MIN, X_MAX, -90, 90);
-    int yAng = map(y, Y_MIN, Y_MAX, -90, 90);
-    int zAng = map(z, Z_MIN, Z_MAX, -90, 90);
-
-    // convert radians to degrees
-    int pitch = -(RAD_TO_DEG * (atan2(-yAng, -zAng) + PI));
-    int roll = RAD_TO_DEG * (atan2(-xAng, -zAng) + PI);
-
-    // convert left roll and forward pitch to negative degrees
-    if (pitch < -180) {
-      pitch = pitch + 360;
-    }
-    if (roll > 180) {
-      roll = roll - 360;
-    }
-
-    // TODO: actually sample pitch/roll at zero time
-    lastPitch = pitch;
-    lastRoll = roll;
-
-    // Take into account any offset
-    pitch -= pitchOffset;
-    roll -= rollOffset;
-
-    // Now we need to re-add the offset in case we try to roll around 180/-180 again
-    if (pitch < -180) {
-      pitch += 360;
-    } else if (pitch > 180) {
-      pitch -= 360;
-    }
-    if (roll < -180) {
-      roll += 360;
-    } else if (roll > 180) {
-      roll -= 360;
-    }
-
-    // write the pitch and roll to the second line
+    int pitch, roll;
+    getIncline(pitch, roll, false);
     displayIncline(roll, pitch);
 
     resetCounter();
@@ -497,10 +487,11 @@ void loopInclinometer() {
 
 
 void loopAltimeter() {
-  if (millis() - millisCounter > 1000) {
+  if (millis() - millisCounter > 500) {
 
     moveToFirstLine();
-    lcd.print("    Altitude    ");
+    lcd.print("    Altitude   ");
+    lcd.write(CLICK);
     moveToSecondLine();
     outputAltitudeLine(false, NULL);
 
@@ -508,48 +499,51 @@ void loopAltimeter() {
   }
 }
 
-void loopTrack() {
-  if (millis() - millisCounter > 1000) {
+
+void loopCompass() {
+  if (millis() - millisCounter > 500) {
+
+    int x, y, z;
+    mag.getHeading(&x, &y, &z);
+    float heading = atan2(y, x);
+    if (heading < 0) {
+      heading += 2 * M_PI;
+    }
+    heading = heading * 180 / M_PI;
+
+    String degree = String(int(heading)) + char(DEGREE);
+    String compass = degreeToCompass(heading);
+
     moveToFirstLine();
-    lcd.print(" Track Altitude ");
+    lcd.print("     Heading    ");
+    moveToSecondLine();
+    centerText(compass, 8);
+    centerText(degree, 8);
+
+    resetCounter();
+  }
+
+}
+
+void loopTrack() {
+  if (millis() - millisCounter > 500) {
+    moveToFirstLine();
+    lcd.print("Track Altitude ");
+    lcd.write(CLICK);
     moveToSecondLine();
     outputAltitudeLine(true, NULL);
-
     resetCounter();
   }
 }
 
 void loopMinMax() {
-  if (millis() - millisCounter > 1000) {
+  if (millis() - millisCounter > 500) {
     moveToFirstLine();
-    lcd.print("   Min    Max   ");
+    lcd.print("   Min    Max  ");
+    lcd.write(CLICK);
     moveToSecondLine();
-
-    // Output minimum altitude
-    int beforeMin = center(altitudeWidth(minAltitude), 8) / 16;
-    for (int i=0; i<beforeMin; i++) {
-      lcd.print(" ");
-    }
-
-    displayAltitudeWithUnit(minAltitude);
-
-    int afterMin = center(altitudeWidth(minAltitude), 8) % 16;
-    for (int i=0; i<afterMin; i++) {
-      lcd.print(" ");
-    }
-
-    // Output maximum altitude
-    int beforeMax = center(altitudeWidth(maxAltitude), 8) / 16;
-    for (int i=0; i<beforeMax; i++) {
-      lcd.print(" ");
-    }
-
-    displayAltitudeWithUnit(maxAltitude);
-
-    int afterMax = center(altitudeWidth(maxAltitude), 8) % 16;
-    for (int i=0; i<afterMax; i++) {
-      lcd.print(" ");
-    }
+    centerText(altitudeWithUnit(minAltitude), 8, true);
+    centerText(altitudeWithUnit(maxAltitude), 8, false);
 
     resetCounter();
   }
@@ -558,38 +552,38 @@ void loopMinMax() {
 void loopCalibrate() {
   if (millis() - millisCounter > 250) {
     moveToFirstLine();
-    lcd.print("Current Altitude");
+    lcd.print("  Set Altitude ");
+    lcd.write(UP_ARROW);
     moveToSecondLine();
 
     if (calibrateAltitudeDisplay == NULL) {
       calibrateAltitudeDisplay = getAltitude();
     }
     outputAltitudeLine(false, calibrateAltitudeDisplay);
+    lcd.setCursor(15,1);
     lcd.write(DOWN_ARROW);
+
     resetCounter();
   }
 }
 
 void loopTemperature() {
   if (millis() - millisCounter > 1000) {
+    String output;
     moveToFirstLine();
-    lcd.print("  Temperature   ");
+    lcd.print("  Temperature  ");
+    lcd.write(CLICK);
     moveToSecondLine();
 
     float temperature = getTemperature();
 
-    lcd.print("     ");
-
     if (unit == 'i') {
-      lcd.print(temperature*9/5+32,1);
-      lcd.write(DEGREE);
-      lcd.write("F");
+      output = floatToString(temperature*9/5+32, 1) + char(DEGREE) + 'F';
     } else {
-      lcd.print(temperature,1);
-      lcd.write(DEGREE);
-      lcd.write("C");
+      output = floatToString(temperature, 1) + char(DEGREE) + 'C';
     }
-    lcd.print("      ");
+    centerText(output, 16);
+
     resetCounter();
   }
 }
@@ -612,24 +606,6 @@ void loopBrightness() {
   }
 }
 
-
-
-
-//////////////////////////////
-// Random helpers
-//////////////////////////////
-
-// Returns a number that has the left and right padding values "encoded" into it.
-// Divide by 16 to get the left padding and MOD by 16 to get the right padding.
-//
-// 71 means 4 characters to the left (0x47 / 16) and 7 to the right (0x47 % 16)
-int center(int chars, int width) {
-  int left, right;
-  left = right = (width - chars) / 2;
-  right += (width - chars) % 2;
-
-  return (left * 16) + right;
-}
 
 
 
@@ -685,7 +661,6 @@ void decreaseBrightness() {
 
 void setBrightness() {
   analogWrite(BLPin, brightness);
-  // EEPROM.write(LCD_BACKLIGHT_ADDRESS, brightness);
 }
 
 
@@ -699,64 +674,71 @@ void saveBrightness() {
 // Incline functions
 //////////////////////////////
 
+// Pass the shortCircuit boolean if you want to return the roll/pitch without
+// offset correction (used to set offset values)
+void getIncline(int &pitch, int &roll, bool shortCircuit) {
+  int x, y, z;
+  accel.getAcceleration(&x, &y, &z);
+
+  // convert to range of -90 to +90 degrees
+  int xAng = map(x, X_MIN, X_MAX, -90, 90);
+  int yAng = map(y, Y_MIN, Y_MAX, -90, 90);
+  int zAng = map(z, Z_MIN, Z_MAX, -90, 90);
+
+  // convert radians to degrees
+  int pitchOut = -(RAD_TO_DEG * (atan2(-yAng, -zAng) + PI));
+  int rollOut = RAD_TO_DEG * (atan2(-xAng, -zAng) + PI);
+
+  // convert left roll and forward pitch to negative degrees
+  if (pitchOut < -180) {
+    pitchOut = pitchOut + 360;
+  }
+  if (rollOut > 180) {
+    rollOut = rollOut - 360;
+  }
+
+  if (shortCircuit) {
+    pitch = pitchOut;
+    roll = rollOut;
+    return;
+  }
+
+  // Take into account any offset
+  pitchOut -= pitchOffset;
+  rollOut -= rollOffset;
+
+  // Now we need to re-add the offset in case we try to roll around 180/-180 again
+  if (pitchOut < -180) {
+    pitchOut += 360;
+  } else if (pitchOut > 180) {
+    pitchOut -= 360;
+  }
+  if (rollOut < -180) {
+    rollOut += 360;
+  } else if (rollOut > 180) {
+    rollOut -= 360;
+  }
+
+  pitch = pitchOut;
+  roll = rollOut;
+}
+
+
 void zeroInclinometer() {
-  pitchOffset = lastPitch;
+  getIncline(pitchOffset, rollOffset, true);
   EEPROM.write(PITCH_OFFSET_ADDRESS, pitchOffset);
-  rollOffset = lastRoll;
   EEPROM.write(ROLL_OFFSET_ADDRESS, rollOffset);
 }
 
 
 // Writes the current pitch/roll to the screen
 void displayIncline(int first, int second) {
-  // Move to the start of the second line
-  moveToFirstLine();
-  lcd.print("  Pitch   Roll  ");
-  moveToSecondLine();
-
   // convert int values to strings for output
-  String firstString = String(first);
-  String secondString = String(second);
+  String firstString = String(first) + char(DEGREE);
+  String secondString = String(second) + char(DEGREE);
 
-  // pad spaces before pitch value
-  String output = "  ";
-  if (firstString.length() < 4) {
-    output += " ";
-  }
-  if (firstString.length() == 1) {
-    output += " ";
-  }
-  output += firstString;
-
-  // write pitch value
-  lcd.print(output);
-  lcd.write(DEGREE);
-
-  int outputLength = output.length() + 1;
-
-  // pad spaces before pitch value
-  output = "";
-  for (int i=outputLength; i<10; i++) {
-    output += " ";
-  }
-  if (firstString.length() < 3) {
-    output += " ";
-  }
-  if (secondString.length() == 1) {
-    output += " ";
-  }
-  output += secondString;
-
-  // pad spaces before roll value
-  lcd.print(output);
-  lcd.write(DEGREE);
-
-  outputLength += output.length() + 1;
-
-  // fill the rest of the line with blanks
-  for (int i=outputLength; i<16; i++) {
-    lcd.print(" ");
-  }
+  centerText(firstString, 8, true);
+  centerText(secondString, 8, false);
 
 }
 
@@ -770,7 +752,6 @@ void displayIncline(int first, int second) {
 // Zeros out the tracking altitude
 void resetTrackingAltitude() {
   trackingAltitudeOffset = getAltitude() + calibrateAltitudeOffset;
-  // EEPROM.write(TRACKING_ALTITUDE_OFFSET_ADDRESS, trackingAltitudeOffset * 10);
 }
 
 
@@ -851,59 +832,20 @@ void outputAltitudeLine(bool includeTrackingOffset, float overrideAltitude) {
     altitude -= trackingAltitudeOffset;
   }
 
-  // pad with some white space
-  int before = center(altitudeWidth(altitude), 16) / 16;
-  for (int i=0; i<before; i++) {
-    lcd.print(" ");
-  }
-
-  displayAltitudeWithUnit(altitude);
-
-  // end with white space
-  int after = center(altitudeWidth(altitude), 16) % 16;
-  for (int j=0; j<after; j++) {
-    lcd.print(" ");
-  }
+  centerText(altitudeWithUnit(altitude), 16);
 }
 
 
-// Write the only the altitude to the screen
-void displayAltitudeWithUnit(float altitude) {
+// Write only the altitude to the screen
+String altitudeWithUnit(float altitude) {
   float calibratedAltitude = altitude + calibrateAltitudeOffset;
-  float num;
-  char unitChar;
-  int decimals;
 
   if (unit == 'i') {
-    int intAltitude = round(calibratedAltitude * metersToFeet);
-    num = round(calibratedAltitude * metersToFeet);
-    // unitChar = '\'';
-    unitChar = 3;
-    decimals = 0;
+    return String(round(calibratedAltitude * metersToFeet)) + char(FOOT);
   } else {
-    num = round(calibratedAltitude * 10) / 10.0;
-    unitChar = 'm';
-    decimals = 1;
+    return floatToString(calibratedAltitude, 1) + 'm';
   }
 
-  lcd.print(num, decimals);
-  lcd.write(unitChar);
-}
-
-
-// Width of altitude itself (including unit)
-int altitudeWidth(float altitude) {
-  int altitudeChars = 1;   // start with one character for the unit
-
-  if (unit == 'i') {
-    int intAltitude = round(altitude * metersToFeet);
-    altitudeChars = altitudeChars + String(intAltitude).length();
-  } else {
-    int intAltitude = round(altitude * 10);
-    altitudeChars = altitudeChars + String(intAltitude).length() + 1; // add one character for the decimal in meters
-  }
-
-  return altitudeChars;
 }
 
 
@@ -945,7 +887,95 @@ void saveAltitudeCalibration() {
   // Reset to 0 so we get a raw altitude reading from scratch
   calibrateAltitudeOffset = 0;
   calibrateAltitudeOffset = calibrateAltitudeDisplay - getAltitude();
-  //Serial.print("calibrateAltitudeOffset: ");
-  //Serial.println(calibrateAltitudeOffset);
   //EEPROM.write(CALIBRATE_ALTITUDE_OFFSET_ADDRESS, calibrateAltitudeOffset * 10);
 }
+
+
+///////////////////////
+// Compass functions
+///////////////////////
+
+String degreeToCompass(float heading) {
+  if (heading > 337.5 || heading <= 22.5)
+    return "N";
+  else if (heading > 22.5 && heading <= 67.5)
+    return "NW";
+  else if (heading > 67.5 && heading <= 112.5)
+    return "W";
+  else if (heading > 112.5 && heading <= 157.5)
+    return "SW";
+  else if (heading > 157.5 && heading <= 202.5)
+    return "S";
+  else if (heading > 202.5 && heading <= 247.5)
+    return "SE";
+  else if (heading > 247.5 && heading <= 292.5)
+    return "E";
+  else if (heading > 292.5 && heading <= 337.5)
+    return "NE";
+}
+
+
+
+//////////////////////////////
+// Random helpers
+//////////////////////////////
+
+// Centers an integer
+void centerText(int num, int width) {
+  String text = String(num);
+  centerString(text, width, false);
+}
+
+// Centers a float
+void centerText(float num, int decimals, int width) {
+  String text = floatToString(num, decimals);
+  centerString(text, width, false);
+}
+
+// Centers a string
+void centerText(String text, int width) {
+  centerString(text, width, false);
+}
+
+// Centers a string
+void centerText(String text, int width, bool prependWhiteSpace) {
+  centerString(text, width, prependWhiteSpace);
+}
+
+// Converts a floating point number to a string
+String floatToString(float num, int decimals) {
+  int wholePart = int(num);
+  int precision = pow(10, decimals);
+  int fractionalPart = abs(num - wholePart) * precision;
+  String text = String(wholePart);
+  text += ".";
+  text += String(fractionalPart);
+
+  return text;
+}
+
+// Takes a string and outputs it centered within the given width
+void centerString(String text, int width, bool prependWhiteSpace) {
+  int textLength = text.length();
+  int totalWhiteSpace = width - textLength;
+  int left = totalWhiteSpace / 2;
+  int right = left;
+
+  // Should we put any odd whitespace at the beginning or the endminmax
+  if (prependWhiteSpace) {
+    left += (totalWhiteSpace % 2);
+  } else {
+    right += (totalWhiteSpace % 2);
+  }
+
+  for (int i=0; i<left; i++) {
+    lcd.print(" ");
+  }
+
+  lcd.print(text);
+
+  for (int i=0; i<right; i++) {
+    lcd.print(" ");
+  }
+}
+
