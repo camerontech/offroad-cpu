@@ -7,7 +7,7 @@
 #include <HMC5883L.h>
 
 
-const int VERSION = 1;
+const int VERSION = 2;
 
 unsigned long millisCounter = 0;
 unsigned long minMaxAltitudeMillsCounter = 0;
@@ -341,6 +341,12 @@ void setupButton() {
   digitalWrite(UP, HIGH);
   digitalWrite(PUSH, HIGH);
   digitalWrite(DOWN, HIGH);
+
+  // Holding the switch in the down position at startup performs a factory reset
+  if (digitalRead(DOWN) == LOW) {
+    factoryReset();
+    setupVariables();
+  }
 }
 
 
