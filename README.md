@@ -1,4 +1,4 @@
-altimeter-inclinometer
+Offroad CPu
 ======================
 
-CTAIM1 Altimeter &amp; Inclinometer
+Inclinometer, altimeter and compass for your offroading pleasure. More details to come...
