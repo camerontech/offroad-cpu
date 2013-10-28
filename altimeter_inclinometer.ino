@@ -223,34 +223,10 @@ const int CALIBRATE_ALTITUDE_OFFSET_ADDRESS = EEPROM.getAddress(sizeof(float)); 
 
 
 void setup() {
-  analogReference(EXTERNAL);
-
- //  Serial.begin(9600);
- //  Serial.print("LCD_BACKLIGHT_ADDRESS: ");
- //  Serial.println(LCD_BACKLIGHT_ADDRESS);
- //  Serial.print("BAUD_ADDRESS: ");
-	// Serial.println(BAUD_ADDRESS);
- //  Serial.print("SPLASH_SCREEN_ADDRESS: ");
-	// Serial.println(SPLASH_SCREEN_ADDRESS);
- //  Serial.print("ROWS_ADDRESS: ");
-	// Serial.println(ROWS_ADDRESS);
- //  Serial.print("COLUMNS_ADDRESS: ");
-	// Serial.println(COLUMNS_ADDRESS);
-
- //  // sensors
- //  Serial.print("VERSION_ADDRESS: ");
-	// Serial.println(VERSION_ADDRESS);
- //  Serial.print("UNIT_ADDRESS: ");
-	// Serial.println(UNIT_ADDRESS);
- //  Serial.print("PITCH_OFFSET_ADDRESS: ");
-	// Serial.println(PITCH_OFFSET_ADDRESS);
- //  Serial.print("ROLL_OFFSET_ADDRESS: ");
-	// Serial.println(ROLL_OFFSET_ADDRESS);
- //  Serial.print("MODE_ADDRESS: ");
-	// Serial.println(MODE_ADDRESS);
- //  Serial.print("CALIBRATE_ALTITUDE_OFFSET_ADDRESS: ");
-	// Serial.println(CALIBRATE_ALTITUDE_OFFSET_ADDRESS);
-
+  // Our current sensor actually accepts 5v now, and there's nothing currently
+  // hooked up to the analog pins, but there may be in the future and most
+  // sensors are 3.3v so let's just set it for now
+  // analogReference(EXTERNAL);
 
   // Set EEPROM variables if the version changes
   if (EEPROM.readInt(VERSION_ADDRESS) != VERSION) {
