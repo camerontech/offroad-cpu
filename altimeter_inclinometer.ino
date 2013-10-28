@@ -1,6 +1,6 @@
 #include <Wire.h>
 #include <LiquidCrystal.h>
-#include <EEPROM.h>
+#include <EEPROMEx.h>
 #include <I2Cdev.h>
 #include <BMP085.h>
 #include <ADXL345.h>
@@ -62,7 +62,7 @@ int unsigned buttonState = 0;
 
 
 //////////////////////
-// Altimeter
+// Accelerometer
 //////////////////////
 
 ADXL345 accel;
@@ -83,11 +83,8 @@ int pitchOffset, rollOffset;
 //////////////////////
 
 BMP085 barometer;
-float temperature;
-float pressure;
-float altitude;
 int32_t lastMicros;
-
+float lastAltitude = 0;
 
 // User-defined offset based some something like GPS readings
 float calibrateAltitudeOffset = 0;
@@ -102,7 +99,6 @@ float maxAltitude;
 
 // convert from meters to feet
 float metersToFeet = 3.28084;
-
 
 
 ////////////////////
@@ -206,30 +202,59 @@ byte FOOT = 3;
 byte CLICK = 4;
 
 
+///////////////////////////
 // EEPROM memory addresses
+///////////////////////////
 
 // display
-const int LCD_BACKLIGHT_ADDRESS = 1;  // backlight setting
-const int BAUD_ADDRESS = 2;           // Baud rate setting
-const int SPLASH_SCREEN_ADDRESS = 3;  // splash screen on/off
-const int ROWS_ADDRESS = 4;           // number of rows
-const int COLUMNS_ADDRESS = 5;        // number of columns
+const int LCD_BACKLIGHT_ADDRESS = EEPROM.getAddress(sizeof(int));              // backlight setting
+const int BAUD_ADDRESS = EEPROM.getAddress(sizeof(int));                       // Baud rate setting
+const int SPLASH_SCREEN_ADDRESS = EEPROM.getAddress(sizeof(int));              // splash screen on/off
+const int ROWS_ADDRESS = EEPROM.getAddress(sizeof(int));                       // number of rows
+const int COLUMNS_ADDRESS = EEPROM.getAddress(sizeof(int));                    // number of columns
 
 // sensors
-const int VERSION_ADDRESS = 10;
-const int UNIT_ADDRESS = 11;
-const int PITCH_OFFSET_ADDRESS = 12;
-const int ROLL_OFFSET_ADDRESS = 13;
-const int MODE_ADDRESS = 14;
-//const int CALIBRATE_ALTITUDE_OFFSET_ADDRESS = 16;
+const int VERSION_ADDRESS = EEPROM.getAddress(sizeof(int));                   // version
+const int UNIT_ADDRESS = EEPROM.getAddress(sizeof(byte));                      // metric or imperial
+const int PITCH_OFFSET_ADDRESS = EEPROM.getAddress(sizeof(int));              // pitch degree offset
+const int ROLL_OFFSET_ADDRESS = EEPROM.getAddress(sizeof(int));               // roll degree offset
+const int MODE_ADDRESS = EEPROM.getAddress(sizeof(int));                      // which menu item is showing
+const int CALIBRATE_ALTITUDE_OFFSET_ADDRESS = EEPROM.getAddress(sizeof(float)); // altitude offset
 
 
 void setup() {
   analogReference(EXTERNAL);
 
+ //  Serial.begin(9600);
+ //  Serial.print("LCD_BACKLIGHT_ADDRESS: ");
+ //  Serial.println(LCD_BACKLIGHT_ADDRESS);
+ //  Serial.print("BAUD_ADDRESS: ");
+	// Serial.println(BAUD_ADDRESS);
+ //  Serial.print("SPLASH_SCREEN_ADDRESS: ");
+	// Serial.println(SPLASH_SCREEN_ADDRESS);
+ //  Serial.print("ROWS_ADDRESS: ");
+	// Serial.println(ROWS_ADDRESS);
+ //  Serial.print("COLUMNS_ADDRESS: ");
+	// Serial.println(COLUMNS_ADDRESS);
+
+ //  // sensors
+ //  Serial.print("VERSION_ADDRESS: ");
+	// Serial.println(VERSION_ADDRESS);
+ //  Serial.print("UNIT_ADDRESS: ");
+	// Serial.println(UNIT_ADDRESS);
+ //  Serial.print("PITCH_OFFSET_ADDRESS: ");
+	// Serial.println(PITCH_OFFSET_ADDRESS);
+ //  Serial.print("ROLL_OFFSET_ADDRESS: ");
+	// Serial.println(ROLL_OFFSET_ADDRESS);
+ //  Serial.print("MODE_ADDRESS: ");
+	// Serial.println(MODE_ADDRESS);
+ //  Serial.print("CALIBRATE_ALTITUDE_OFFSET_ADDRESS: ");
+	// Serial.println(CALIBRATE_ALTITUDE_OFFSET_ADDRESS);
+
+
   // Set EEPROM variables if the version changes
-  if (EEPROM.read(VERSION_ADDRESS) != VERSION) {
-    factoryReset();
+  if (EEPROM.readInt(VERSION_ADDRESS) != VERSION) {
+    memoryReset();
   }
 
   Wire.begin();
@@ -240,14 +265,20 @@ void setup() {
   setupAccelerometer();
   setupBarometer();
   setupMagnetometer();
+
+  // Holding the switch in the down position at startup performs a factory reset
+  if (digitalRead(DOWN) == LOW) {
+    factoryReset();
+  }
 }
 
 void loop() {
 
+  // Were any buttons pressed?
   buttonCheck();
 
+  // To properly record the min/max altitude we need to check it on every cycle
   updateMinMaxAltitude();
-  saveMode();
 
   if (mode == INCLINE) {
     loopInclinometer();
@@ -276,34 +307,36 @@ void loop() {
 ////////////
 
 void factoryReset() {
-  EEPROM.write(UNIT_ADDRESS, 1);
-  EEPROM.write(PITCH_OFFSET_ADDRESS, 0);
-  EEPROM.write(ROLL_OFFSET_ADDRESS, 0);
-  EEPROM.write(MODE_ADDRESS, INCLINE);
-  //EEPROM.write(CALIBRATE_ALTITUDE_OFFSET_ADDRESS, 0);
+  memoryReset();
+  setupVariables();
+  setBrightness();
+}
 
-  EEPROM.write(VERSION_ADDRESS, VERSION);
+void memoryReset() {
+  EEPROM.writeInt(LCD_BACKLIGHT_ADDRESS, 255);               // max brightness
+  EEPROM.writeByte(UNIT_ADDRESS, 'i');                       // default to imperial
+  EEPROM.writeInt(PITCH_OFFSET_ADDRESS, 0);                  // no pitch offset
+  EEPROM.writeInt(ROLL_OFFSET_ADDRESS, 0);                   // no roll offset
+  EEPROM.writeInt(MODE_ADDRESS, INCLINE);                    // default to inclinometer
+  EEPROM.writeFloat(CALIBRATE_ALTITUDE_OFFSET_ADDRESS, 0.0); // no altitude offset
+
+  EEPROM.writeInt(VERSION_ADDRESS, VERSION);
 }
 
 // Saves the current mode to EEPROM
 void saveMode() {
-  EEPROM.write(MODE_ADDRESS, mode);
+  EEPROM.writeInt(MODE_ADDRESS, mode);
 }
 
+// Reads variables from EEPROM and sets their RAM equivalents
 void setupVariables() {
-
-  if (EEPROM.read(UNIT_ADDRESS) == 0) {
-    unit = 'm';
-  } else {
-    unit = 'i';
-  }
-
-  pitchOffset = EEPROM.read(PITCH_OFFSET_ADDRESS);
-  rollOffset = EEPROM.read(ROLL_OFFSET_ADDRESS);
-  mode = displayMenuItem = EEPROM.read(MODE_ADDRESS);
-  //calibrateAltitudeOffset = EEPROM.read(CALIBRATE_ALTITUDE_OFFSET_ADDRESS) / 10.0;
-  //calibrateAltitudeDisplay = getAltitude() - calibrateAltitudeOffset;
-
+  brightness = EEPROM.readInt(LCD_BACKLIGHT_ADDRESS);
+  unit = EEPROM.readByte(UNIT_ADDRESS);
+  pitchOffset = EEPROM.readInt(PITCH_OFFSET_ADDRESS);
+  rollOffset = EEPROM.readInt(ROLL_OFFSET_ADDRESS);
+  mode = displayMenuItem = EEPROM.readInt(MODE_ADDRESS);
+  calibrateAltitudeOffset = EEPROM.readFloat(CALIBRATE_ALTITUDE_OFFSET_ADDRESS);
+  calibrateAltitudeDisplay = NULL;
 }
 
 void setupDisplay() {
@@ -318,8 +351,7 @@ void setupDisplay() {
 
   // Set up the backlight
   pinMode(BLPin, OUTPUT);
-  brightness = EEPROM.read(LCD_BACKLIGHT_ADDRESS);
-  // setBacklight(EEPROM.read(LCD_BACKLIGHT_ADDRESS));
+  brightness = EEPROM.readInt(LCD_BACKLIGHT_ADDRESS);
   setBrightness();
 
   // Splash screen
@@ -341,12 +373,6 @@ void setupButton() {
   digitalWrite(UP, HIGH);
   digitalWrite(PUSH, HIGH);
   digitalWrite(DOWN, HIGH);
-
-  // Holding the switch in the down position at startup performs a factory reset
-  if (digitalRead(DOWN) == LOW) {
-    factoryReset();
-    setupVariables();
-  }
 }
 
 
@@ -402,9 +428,8 @@ void buttonClick() {
         displayMenuItem = MENU_LENGTH - 1;
       }
     } else if (buttonState == PUSH) {
-      if (displayMenuItem == RESET) {  // Factory Reset feature
+      if (displayMenuItem == RESET) {         // Factory Reset feature
         factoryReset();
-        setupVariables();
       } else{
         mode = displayMenuItem;               // select menu item
         startMode();
@@ -420,6 +445,7 @@ void buttonClick() {
         saveAltitudeCalibration();
         displayMenuItem = ALTITUDE;
         mode = ALTITUDE;
+        startMode();
       }
     } else if (mode == BRIGHTNESS) { // when in brightness mode, up/down changes brightness, push goes back to menu
       if (buttonState == UP) {
@@ -430,8 +456,9 @@ void buttonClick() {
         saveBrightness();
         mode = lastMode;
         displayMenuItem = lastMode;
+        startMode();
       }
-    } else {                  // when not in calibrate mode, up/down goes to menu, push is optional function
+    } else {                                                 // in most modes up/down goes to menu, push is optional function
       if (buttonState == UP || buttonState == DOWN) {        // Button pressed up or down to go into the menu
         lastMode = mode;
         mode = MENU;
@@ -439,7 +466,7 @@ void buttonClick() {
         resetTrackingAltitude();
       } else if (mode == MINMAX && buttonState == PUSH) {    // Button clicked while viewing min/max
         resetMinMaxAltitude();
-      } else if (mode == ALTITUDE || mode == TEMPERATURE && buttonState == PUSH) { // Button clicked on altimeter
+      } else if (mode == ALTITUDE || mode == TEMPERATURE && buttonState == PUSH) { // Button clicked on altimeter or thermometer
         switchUnit();
       } else if (mode == INCLINE && buttonState == PUSH) {   // Button clicked while viewing incline
         zeroInclinometer();
@@ -450,6 +477,7 @@ void buttonClick() {
 
 // Called when a menu item is selected but before looping through that mode
 void startMode() {
+  saveMode();
   if (mode == CALIBRATE) {
     startCalibration();
   }
@@ -518,7 +546,7 @@ void loopCompass() {
     heading = heading * 180 / M_PI;
 
     String degree = String(int(heading)) + char(DEGREE);
-    String compass = degreeToCompass(heading);
+    String compass = degreeToCardinal(heading);
 
     moveToFirstLine();
     lcd.print("     Heading    ");
@@ -671,7 +699,7 @@ void setBrightness() {
 
 
 void saveBrightness() {
-  EEPROM.write(LCD_BACKLIGHT_ADDRESS, brightness);
+  EEPROM.writeInt(LCD_BACKLIGHT_ADDRESS, brightness);
 }
 
 
@@ -684,12 +712,26 @@ void saveBrightness() {
 // offset correction (used to set offset values)
 void getIncline(int &pitch, int &roll, bool shortCircuit) {
   int x, y, z;
-  accel.getAcceleration(&x, &y, &z);
+  int xTotal = 0;
+  int yTotal = 0;
+  int zTotal = 0;
+  int samples = 10;
+
+  // Take 10 samples and average them to help lower noise
+  for (int i=0; i<samples; i++) {
+    accel.getAcceleration(&x, &y, &z);
+    xTotal += x;
+    yTotal += y;
+    zTotal += z;
+  }
+  int xAvg = xTotal / samples;
+  int yAvg = yTotal / samples;
+  int zAvg = zTotal / samples;
 
   // convert to range of -90 to +90 degrees
-  int xAng = map(x, X_MIN, X_MAX, -90, 90);
-  int yAng = map(y, Y_MIN, Y_MAX, -90, 90);
-  int zAng = map(z, Z_MIN, Z_MAX, -90, 90);
+  int xAng = map(xAvg, X_MIN, X_MAX, -90, 90);
+  int yAng = map(yAvg, Y_MIN, Y_MAX, -90, 90);
+  int zAng = map(zAvg, Z_MIN, Z_MAX, -90, 90);
 
   // convert radians to degrees
   int pitchOut = -(RAD_TO_DEG * (atan2(-yAng, -zAng) + PI));
@@ -703,6 +745,8 @@ void getIncline(int &pitch, int &roll, bool shortCircuit) {
     rollOut = rollOut - 360;
   }
 
+  // Sometimes we want the actual output degree measurement, not the calibrated
+  // version, so pass `true` to the shortCircuit param and return them
   if (shortCircuit) {
     pitch = pitchOut;
     roll = rollOut;
@@ -729,11 +773,11 @@ void getIncline(int &pitch, int &roll, bool shortCircuit) {
   roll = rollOut;
 }
 
-
+// Takes the current incline degrees and sets them to 0 by recording offsets
 void zeroInclinometer() {
   getIncline(pitchOffset, rollOffset, true);
-  EEPROM.write(PITCH_OFFSET_ADDRESS, pitchOffset);
-  EEPROM.write(ROLL_OFFSET_ADDRESS, rollOffset);
+  EEPROM.writeInt(PITCH_OFFSET_ADDRESS, pitchOffset);
+  EEPROM.writeInt(ROLL_OFFSET_ADDRESS, rollOffset);
 }
 
 
@@ -760,7 +804,7 @@ void resetTrackingAltitude() {
   trackingAltitudeOffset = getAltitude() + calibrateAltitudeOffset;
 }
 
-
+// Take the current altitude and set that as both the min and max
 void resetMinMaxAltitude() {
   minAltitude = getAltitude();
   maxAltitude = minAltitude;
@@ -788,11 +832,12 @@ void updateMinMaxAltitude() {
 void switchUnit() {
   if (unit == 'i') {
     unit = 'm';
-    EEPROM.write(UNIT_ADDRESS, 0);
+    // EEPROM.write(UNIT_ADDRESS, 0);
   } else {
     unit = 'i';
-    EEPROM.write(UNIT_ADDRESS, 1);
+    // EEPROM.write(UNIT_ADDRESS, 1);
   }
+  EEPROM.writeByte(UNIT_ADDRESS, unit);
 }
 
 
@@ -808,18 +853,33 @@ float getTemperature() {
 
 // Gets the current altitude
 float getAltitude() {
+  float output;
+  int samples = 10;
+  float totalAltitude = 0.0;
+
   // Have to read temperature before getting pressure
   getTemperature();
 
-  // request pressure (3x oversampling mode, high detail, 23.5ms delay)
-  barometer.setControl(BMP085_MODE_PRESSURE_3);
+  for (int i=0; i<samples; i++) {
+    barometer.setControl(BMP085_MODE_PRESSURE_3);
 
-  lastMicros = micros();
-  while (micros() - lastMicros < barometer.getMeasureDelayMicroseconds());
+    lastMicros = micros();
+    while (micros() - lastMicros < barometer.getMeasureDelayMicroseconds());
+    float pressure = barometer.getPressure();
+    totalAltitude += barometer.getAltitude(pressure);
+  }
 
-  float pressure = barometer.getPressure();
+  // To help reduce noise, only show altitude changing if the change is greater
+  // than the average noise level (1m or so)
+  // if (abs(altitude - lastAltitude) > 1.0) {
+  //   output = altitude;
+  //   lastAltitude = altitude;
+  // } else {
+  //   output = lastAltitude;
+  // }
 
-  return barometer.getAltitude(pressure);
+  // return output;
+  return totalAltitude / (float)samples;
 }
 
 
@@ -891,9 +951,11 @@ void startCalibration() {
 // Save the calibration offset
 void saveAltitudeCalibration() {
   // Reset to 0 so we get a raw altitude reading from scratch
-  calibrateAltitudeOffset = 0;
+  calibrateAltitudeOffset = 0.0;
   calibrateAltitudeOffset = calibrateAltitudeDisplay - getAltitude();
-  //EEPROM.write(CALIBRATE_ALTITUDE_OFFSET_ADDRESS, calibrateAltitudeOffset * 10);
+
+  // Save to EEPROM
+  EEPROM.writeFloat(CALIBRATE_ALTITUDE_OFFSET_ADDRESS, calibrateAltitudeOffset);
 }
 
 
@@ -901,7 +963,7 @@ void saveAltitudeCalibration() {
 // Compass functions
 ///////////////////////
 
-String degreeToCompass(float heading) {
+String degreeToCardinal(float heading) {
   if (heading > 337.5 || heading <= 22.5)
     return "N";
   else if (heading > 22.5 && heading <= 67.5)
@@ -923,7 +985,7 @@ String degreeToCompass(float heading) {
 
 
 //////////////////////////////
-// Random helpers
+// Text centering helpers
 //////////////////////////////
 
 // Centers an integer
