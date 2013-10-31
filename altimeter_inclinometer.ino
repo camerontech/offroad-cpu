@@ -66,13 +66,21 @@ int unsigned buttonState = 0;
 //////////////////////
 
 ADXL345 accel;
+// blue board
+// const int X_MIN = -254;
+// const int X_MAX = 269;
+// const int Y_MIN = -248;
+// const int Y_MAX = 261;
+// const int Z_MIN = -283;
+// const int Z_MAX = 235;
 
-const int X_MIN = -254;
-const int X_MAX = 269;
-const int Y_MIN = -248;
-const int Y_MAX = 261;
-const int Z_MIN = -283;
-const int Z_MAX = 235;
+// red board
+const int X_MIN = -272;
+const int X_MAX = 303;
+const int Y_MIN = -278;
+const int Y_MAX = 274;
+const int Z_MIN = -277;
+const int Z_MAX = 262;
 
 // So that we can zero out the inclinometer readings
 int pitchOffset, rollOffset;
@@ -83,8 +91,7 @@ int pitchOffset, rollOffset;
 //////////////////////
 
 BMP085 barometer;
-int32_t lastMicros;
-float lastAltitude = 0;
+float lastAltitude;
 
 // User-defined offset based some something like GPS readings
 float calibrateAltitudeOffset = 0;
@@ -105,6 +112,8 @@ float metersToFeet = 3.28084;
 // Magnetometer
 ////////////////////
 HMC5883L mag;
+
+float compassOffset;
 
 
 
@@ -220,13 +229,14 @@ const int PITCH_OFFSET_ADDRESS = EEPROM.getAddress(sizeof(int));              //
 const int ROLL_OFFSET_ADDRESS = EEPROM.getAddress(sizeof(int));               // roll degree offset
 const int MODE_ADDRESS = EEPROM.getAddress(sizeof(int));                      // which menu item is showing
 const int CALIBRATE_ALTITUDE_OFFSET_ADDRESS = EEPROM.getAddress(sizeof(float)); // altitude offset
+const int COMPASS_OFFSET_ADDRESS = EEPROM.getAddress(sizeof(float));            // compass offset
 
 
 void setup() {
   // Our current sensor actually accepts 5v now, and there's nothing currently
   // hooked up to the analog pins, but there may be in the future and most
   // sensors are 3.3v so let's just set it for now
-  // analogReference(EXTERNAL);
+  analogReference(EXTERNAL);
 
   // Set EEPROM variables if the version changes
   if (EEPROM.readInt(VERSION_ADDRESS) != VERSION) {
@@ -295,6 +305,7 @@ void memoryReset() {
   EEPROM.writeInt(ROLL_OFFSET_ADDRESS, 0);                   // no roll offset
   EEPROM.writeInt(MODE_ADDRESS, INCLINE);                    // default to inclinometer
   EEPROM.writeFloat(CALIBRATE_ALTITUDE_OFFSET_ADDRESS, 0.0); // no altitude offset
+  EEPROM.writeFloat(COMPASS_OFFSET_ADDRESS, 0.0);            // no compass offset
 
   EEPROM.writeInt(VERSION_ADDRESS, VERSION);
 }
@@ -313,6 +324,7 @@ void setupVariables() {
   mode = displayMenuItem = EEPROM.readInt(MODE_ADDRESS);
   calibrateAltitudeOffset = EEPROM.readFloat(CALIBRATE_ALTITUDE_OFFSET_ADDRESS);
   calibrateAltitudeDisplay = NULL;
+  compassOffset = EEPROM.readFloat(COMPASS_OFFSET_ADDRESS);
 }
 
 void setupDisplay() {
@@ -438,14 +450,18 @@ void buttonClick() {
       if (buttonState == UP || buttonState == DOWN) {        // Button pressed up or down to go into the menu
         lastMode = mode;
         mode = MENU;
-      } else if (mode == TRACK && buttonState == PUSH) {     // Button clicked while tracking altitude
-        resetTrackingAltitude();
-      } else if (mode == MINMAX && buttonState == PUSH) {    // Button clicked while viewing min/max
-        resetMinMaxAltitude();
-      } else if (mode == ALTITUDE || mode == TEMPERATURE && buttonState == PUSH) { // Button clicked on altimeter or thermometer
-        switchUnit();
-      } else if (mode == INCLINE && buttonState == PUSH) {   // Button clicked while viewing incline
-        zeroInclinometer();
+      } else if (buttonState == PUSH) {
+        if (mode == TRACK) {     // Button clicked while tracking altitude
+          resetTrackingAltitude();
+        } else if (mode == MINMAX) {    // Button clicked while viewing min/max
+          resetMinMaxAltitude();
+        } else if (mode == ALTITUDE || mode == TEMPERATURE) { // Button clicked on altimeter or thermometer
+          switchUnit();
+        } else if (mode == INCLINE) {   // Button clicked while viewing incline
+          zeroInclinometer();
+        } else if (mode == COMPASS) {
+          zeroCompass();
+        }
       }
     }
   }
@@ -497,7 +513,7 @@ void loopInclinometer() {
 
 
 void loopAltimeter() {
-  if (millis() - millisCounter > 500) {
+  if (millis() - millisCounter > 250) {
 
     moveToFirstLine();
     lcd.print("    Altitude   ");
@@ -513,22 +529,13 @@ void loopAltimeter() {
 void loopCompass() {
   if (millis() - millisCounter > 500) {
 
-    int x, y, z;
-    mag.getHeading(&x, &y, &z);
-    float heading = atan2(y, x);
-    if (heading < 0) {
-      heading += 2 * M_PI;
-    }
-    heading = heading * 180 / M_PI;
-
-    String degree = String(int(heading)) + char(DEGREE);
-    String compass = degreeToCardinal(heading);
+    float heading = getHeading();
 
     moveToFirstLine();
-    lcd.print("     Heading    ");
+    lcd.print("     Heading   ");
+    lcd.write(CLICK);
     moveToSecondLine();
-    centerText(compass, 8);
-    centerText(degree, 8);
+    outputHeading(heading);
 
     resetCounter();
   }
@@ -808,19 +815,18 @@ void updateMinMaxAltitude() {
 void switchUnit() {
   if (unit == 'i') {
     unit = 'm';
-    // EEPROM.write(UNIT_ADDRESS, 0);
   } else {
     unit = 'i';
-    // EEPROM.write(UNIT_ADDRESS, 1);
   }
   EEPROM.writeByte(UNIT_ADDRESS, unit);
 }
 
 
+// Gets the temperature from the barometric sensor
 float getTemperature() {
   barometer.setControl(BMP085_MODE_TEMPERATURE);
 
-  lastMicros = micros();
+  long lastMicros = micros();
   while (micros() - lastMicros < barometer.getMeasureDelayMicroseconds());
 
   return barometer.getTemperatureC();
@@ -829,33 +835,31 @@ float getTemperature() {
 
 // Gets the current altitude
 float getAltitude() {
-  float output;
-  int samples = 10;
-  float totalAltitude = 0.0;
+  float altitude, thisAltitude;
 
   // Have to read temperature before getting pressure
   getTemperature();
 
-  for (int i=0; i<samples; i++) {
-    barometer.setControl(BMP085_MODE_PRESSURE_3);
+  barometer.setControl(BMP085_MODE_PRESSURE_3);
 
-    lastMicros = micros();
-    while (micros() - lastMicros < barometer.getMeasureDelayMicroseconds());
-    float pressure = barometer.getPressure();
-    totalAltitude += barometer.getAltitude(pressure);
+  long lastMicros = micros();
+  while (micros() - lastMicros < barometer.getMeasureDelayMicroseconds());
+  float pressure = barometer.getPressure();
+  thisAltitude = barometer.getAltitude(pressure);
+
+  // Use a pseudo-complementary filter to help control the noise from the
+  // altitude measurement. Use 90% of the previous measurement and 10% of the
+  // current. This will delay the actual alititude reading by about 2.25
+  // seconds but it will be much less noisy. With no filtering the altitude
+  // jumps about +/- 3 feet with every measurement (4 times per second)
+  if (lastAltitude == NULL) {
+    altitude = thisAltitude;
+  } else {
+    altitude = 0.9 * lastAltitude + 0.1 * thisAltitude;
   }
+  lastAltitude = altitude;
 
-  // To help reduce noise, only show altitude changing if the change is greater
-  // than the average noise level (1m or so)
-  // if (abs(altitude - lastAltitude) > 1.0) {
-  //   output = altitude;
-  //   lastAltitude = altitude;
-  // } else {
-  //   output = lastAltitude;
-  // }
-
-  // return output;
-  return totalAltitude / (float)samples;
+  return altitude;
 }
 
 
@@ -893,9 +897,9 @@ String altitudeWithUnit(float altitude) {
 
 
 
-///////////////////////
+//////////////////////////////////
 // Altitude calibration functions
-///////////////////////
+//////////////////////////////////
 
 // Increments the altitude calibration offset
 void incrementAltimeterCalibration() {
@@ -935,27 +939,64 @@ void saveAltitudeCalibration() {
 }
 
 
+
 ///////////////////////
 // Compass functions
 ///////////////////////
 
+// Returns degree heading
+float getHeading() {
+  int x, y, z;
+  mag.getHeading(&x, &y, &z);
+  float heading = atan2(y, x);
+  if (heading < 0) {
+    heading += 2 * M_PI;
+  }
+  return heading * 180 / M_PI;
+}
+
+// Converts degrees to a cardinal direction (N, NE, etc)
 String degreeToCardinal(float heading) {
   if (heading > 337.5 || heading <= 22.5)
     return "N";
   else if (heading > 22.5 && heading <= 67.5)
-    return "NW";
+    return "NE";
   else if (heading > 67.5 && heading <= 112.5)
-    return "W";
+    return "E";
   else if (heading > 112.5 && heading <= 157.5)
-    return "SW";
+    return "SE";
   else if (heading > 157.5 && heading <= 202.5)
     return "S";
   else if (heading > 202.5 && heading <= 247.5)
-    return "SE";
+    return "SW";
   else if (heading > 247.5 && heading <= 292.5)
-    return "E";
+    return "W";
   else if (heading > 292.5 && heading <= 337.5)
-    return "NE";
+    return "NW";
+}
+
+// Saves a compass offset for zeroing
+void zeroCompass() {
+  compassOffset = getHeading();
+  EEPROM.writeFloat(COMPASS_OFFSET_ADDRESS, compassOffset);
+}
+
+// Writes the compass to the screen
+void outputHeading(float heading) {
+  // remove offset from heading
+  float headingWithOffset = heading - compassOffset;
+
+  if (headingWithOffset > 359) {
+    headingWithOffset -= 360;
+  } else if (headingWithOffset < 0) {
+    headingWithOffset += 360;
+  }
+
+  String degree = String(int(headingWithOffset)) + char(DEGREE);
+  String cardinal = degreeToCardinal(headingWithOffset);
+
+  centerText(cardinal, 8);
+  centerText(degree, 8);
 }
 
 
