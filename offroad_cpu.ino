@@ -7,7 +7,7 @@
 #include <HMC5883L.h>
 
 
-const int VERSION = 2;
+const int VERSION = 1;
 
 unsigned long millisCounter = 0;
 unsigned long minMaxAltitudeMillsCounter = 0;
@@ -20,6 +20,7 @@ const String menuText[][2] = {{"Incline        ","               "},
                               {"Track          ","Altitude       "},
                               {"Min/Max        ","Altitude       "},
                               {"Calibrate      ","Altitude       "},
+                              {"Calibrate      ","Inclinometer   "},
                               {"Set            ","Brightness     "},
                               {"Factory        ","Reset          "}};
 const unsigned int INCLINE = 0;
@@ -28,11 +29,12 @@ const unsigned int COMPASS = 2;
 const unsigned int TEMPERATURE = 3;
 const unsigned int TRACK = 4;
 const unsigned int MINMAX = 5;
-const unsigned int CALIBRATE = 6;
-const unsigned int BRIGHTNESS = 7;
-const unsigned int RESET = 8;
-const unsigned int MENU = 9;
-const unsigned int MENU_LENGTH = 9;
+const unsigned int CALIBRATE_ALT = 6;
+const unsigned int CALIBRATE_INC = 7;
+const unsigned int BRIGHTNESS = 8;
+const unsigned int RESET = 9;
+const unsigned int MENU = 10;
+const unsigned int MENU_LENGTH = 10;
 
 // Keep track of where we are
 int mode;
@@ -66,21 +68,15 @@ int unsigned buttonState = 0;
 //////////////////////
 
 ADXL345 accel;
-// blue board
-// const int X_MIN = -254;
-// const int X_MAX = 269;
-// const int Y_MIN = -248;
-// const int Y_MAX = 261;
-// const int Z_MIN = -283;
-// const int Z_MAX = 235;
 
-// red board
-const int X_MIN = -272;
-const int X_MAX = 303;
-const int Y_MIN = -278;
-const int Y_MAX = 274;
-const int Z_MIN = -277;
-const int Z_MAX = 262;
+// Extents of accelerometer
+int xMin, xMax, yMin, yMax, zMin, zMax;
+int xMinCal = 0;
+int xMaxCal = 0;
+int yMinCal = 0;
+int yMaxCal = 0;
+int zMinCal = 0;
+int zMaxCal = 0;
 
 // So that we can zero out the inclinometer readings
 int pitchOffset, rollOffset;
@@ -106,6 +102,7 @@ float maxAltitude;
 
 // convert from meters to feet
 float metersToFeet = 3.28084;
+
 
 
 ////////////////////
@@ -216,21 +213,28 @@ byte CLICK = 4;
 ///////////////////////////
 
 // display
-const int LCD_BACKLIGHT_ADDRESS = EEPROM.getAddress(sizeof(int));              // backlight setting
-const int BAUD_ADDRESS = EEPROM.getAddress(sizeof(int));                       // Baud rate setting
-const int SPLASH_SCREEN_ADDRESS = EEPROM.getAddress(sizeof(int));              // splash screen on/off
-const int ROWS_ADDRESS = EEPROM.getAddress(sizeof(int));                       // number of rows
-const int COLUMNS_ADDRESS = EEPROM.getAddress(sizeof(int));                    // number of columns
+const int LCD_BACKLIGHT_ADDRESS = EEPROM.getAddress(sizeof(int));               // backlight setting
+const int BAUD_ADDRESS = EEPROM.getAddress(sizeof(int));                        // Baud rate setting
+const int SPLASH_SCREEN_ADDRESS = EEPROM.getAddress(sizeof(int));               // splash screen on/off
+const int ROWS_ADDRESS = EEPROM.getAddress(sizeof(int));                        // number of rows
+const int COLUMNS_ADDRESS = EEPROM.getAddress(sizeof(int));                     // number of columns
 
 // sensors
-const int VERSION_ADDRESS = EEPROM.getAddress(sizeof(int));                   // version
-const int UNIT_ADDRESS = EEPROM.getAddress(sizeof(byte));                      // metric or imperial
-const int PITCH_OFFSET_ADDRESS = EEPROM.getAddress(sizeof(int));              // pitch degree offset
-const int ROLL_OFFSET_ADDRESS = EEPROM.getAddress(sizeof(int));               // roll degree offset
-const int MODE_ADDRESS = EEPROM.getAddress(sizeof(int));                      // which menu item is showing
+const int VERSION_ADDRESS = EEPROM.getAddress(sizeof(int));                     // version
+const int UNIT_ADDRESS = EEPROM.getAddress(sizeof(byte));                       // metric or imperial
+const int PITCH_OFFSET_ADDRESS = EEPROM.getAddress(sizeof(int));                // pitch degree offset
+const int ROLL_OFFSET_ADDRESS = EEPROM.getAddress(sizeof(int));                 // roll degree offset
+const int MODE_ADDRESS = EEPROM.getAddress(sizeof(int));                        // which menu item is showing
 const int CALIBRATE_ALTITUDE_OFFSET_ADDRESS = EEPROM.getAddress(sizeof(float)); // altitude offset
 const int COMPASS_OFFSET_ADDRESS = EEPROM.getAddress(sizeof(float));            // compass offset
 
+// inclinometer calibrate
+const int X_MIN_ADDRESS = EEPROM.getAddress(sizeof(int));
+const int X_MAX_ADDRESS = EEPROM.getAddress(sizeof(int));
+const int Y_MIN_ADDRESS = EEPROM.getAddress(sizeof(int));
+const int Y_MAX_ADDRESS = EEPROM.getAddress(sizeof(int));
+const int Z_MIN_ADDRESS = EEPROM.getAddress(sizeof(int));
+const int Z_MAX_ADDRESS = EEPROM.getAddress(sizeof(int));
 
 void setup() {
   // Our current sensor actually accepts 5v now, and there's nothing currently
@@ -276,8 +280,10 @@ void loop() {
     loopTrack();
   } else if (mode == MINMAX) {
     loopMinMax();
-  } else if (mode == CALIBRATE) {
-    loopCalibrate();
+  } else if (mode == CALIBRATE_ALT) {
+    loopCalibrateAlt();
+  } else if (mode == CALIBRATE_INC) {
+    loopCalibrateInc();
   } else if (mode == TEMPERATURE) {
     loopTemperature();
   } else if (mode == BRIGHTNESS) {
@@ -307,6 +313,15 @@ void memoryReset() {
   EEPROM.writeFloat(CALIBRATE_ALTITUDE_OFFSET_ADDRESS, 0.0); // no altitude offset
   EEPROM.writeFloat(COMPASS_OFFSET_ADDRESS, 0.0);            // no compass offset
 
+  // Default inclinometer settings, hopefully user calibrates manually
+  EEPROM.writeInt(X_MIN_ADDRESS, -272);
+  EEPROM.writeInt(X_MAX_ADDRESS, 303);
+  EEPROM.writeInt(Y_MIN_ADDRESS, -278);
+  EEPROM.writeInt(Y_MAX_ADDRESS, 274);
+  EEPROM.writeInt(Z_MIN_ADDRESS, -277);
+  EEPROM.writeInt(Z_MAX_ADDRESS, 262);
+
+  // And the current software version
   EEPROM.writeInt(VERSION_ADDRESS, VERSION);
 }
 
@@ -325,6 +340,13 @@ void setupVariables() {
   calibrateAltitudeOffset = EEPROM.readFloat(CALIBRATE_ALTITUDE_OFFSET_ADDRESS);
   calibrateAltitudeDisplay = NULL;
   compassOffset = EEPROM.readFloat(COMPASS_OFFSET_ADDRESS);
+
+  xMin = EEPROM.readInt(X_MIN_ADDRESS);
+  xMax = EEPROM.readInt(X_MAX_ADDRESS);
+  yMin = EEPROM.readInt(Y_MIN_ADDRESS);
+  yMax = EEPROM.readInt(Y_MAX_ADDRESS);
+  zMin = EEPROM.readInt(Z_MIN_ADDRESS);
+  zMax = EEPROM.readInt(Z_MAX_ADDRESS);
 }
 
 void setupDisplay() {
@@ -343,12 +365,11 @@ void setupDisplay() {
   setBrightness();
 
   // Splash screen
-  lcd.clear();
+  moveToFirstLine();
   lcd.print("  Cameron Tech  ");
   moveToSecondLine();
   lcd.print("  Offroad CPU   ");
   delay(2000);
-  lcd.clear();
 }
 
 
@@ -380,6 +401,7 @@ void setupMagnetometer() {
 }
 
 
+// Watches for button events
 void buttonCheck() {
   if (digitalRead(UP) == LOW) {
     buttonState = UP;
@@ -403,6 +425,7 @@ void buttonCheck() {
 }
 
 
+// Button was clicked
 void buttonClick() {
   if (mode == MENU) {
     if (buttonState == DOWN) {
@@ -424,7 +447,7 @@ void buttonClick() {
       }
     }
   } else {
-    if (mode == CALIBRATE) {  // when in calibrate mode, up/down change values, push goes back to menu
+    if (mode == CALIBRATE_ALT) {  // when in calibrate mode, up/down change values, push goes back to menu
       if (buttonState == UP) {
         incrementAltimeterCalibration();
       } else if (buttonState == DOWN) {
@@ -442,9 +465,7 @@ void buttonClick() {
         decreaseBrightness();
       } else {
         saveBrightness();
-        mode = lastMode;
-        displayMenuItem = lastMode;
-        startMode();
+        returnToLastMode();
       }
     } else {                                                 // in most modes up/down goes to menu, push is optional function
       if (buttonState == UP || buttonState == DOWN) {        // Button pressed up or down to go into the menu
@@ -461,17 +482,30 @@ void buttonClick() {
           zeroInclinometer();
         } else if (mode == COMPASS) {
           zeroCompass();
+        } else if (mode = CALIBRATE_INC) {
+          saveIncCalibration();
+          returnToLastMode();
         }
       }
     }
   }
 }
 
+void returnToLastMode() {
+  mode = lastMode;
+  displayMenuItem = lastMode;
+  startMode();
+}
+
+
 // Called when a menu item is selected but before looping through that mode
 void startMode() {
   saveMode();
-  if (mode == CALIBRATE) {
+  if (mode == CALIBRATE_ALT) {
     startCalibration();
+  }
+  if (mode == CALIBRATE_INC) {
+    clearScreen();
   }
 }
 
@@ -484,7 +518,7 @@ void startMode() {
 
 void loopMenu() {
   if (millis() - millisCounter > 250) {
-    lcd.clear();
+    moveToFirstLine();
     lcd.print(menuText[displayMenuItem][0]);
     lcd.write(UP_ARROW);
     moveToSecondLine();
@@ -566,7 +600,7 @@ void loopMinMax() {
   }
 }
 
-void loopCalibrate() {
+void loopCalibrateAlt() {
   if (millis() - millisCounter > 250) {
     moveToFirstLine();
     lcd.print("  Set Altitude ");
@@ -579,6 +613,40 @@ void loopCalibrate() {
     outputAltitudeLine(false, calibrateAltitudeDisplay);
     lcd.setCursor(15,1);
     lcd.write(DOWN_ARROW);
+
+    resetCounter();
+  }
+}
+
+void loopCalibrateInc() {
+  if (millis() - millisCounter > 100) {
+    int x, y, z;
+    accel.getAcceleration(&x, &y, &z);
+
+    if (x < xMinCal) xMinCal = x;
+    if (y < yMinCal) yMinCal = y;
+    if (z < zMinCal) zMinCal = z;
+    if (x > xMaxCal) xMaxCal = x;
+    if (y > yMaxCal) yMaxCal = y;
+    if (z > zMaxCal) zMaxCal = z;
+
+    moveToFirstLine();
+    lcd.print(" ");
+    lcd.print(xMinCal);
+    lcd.print(" ");
+    lcd.print(yMinCal);
+    lcd.print(" ");
+    lcd.print(zMinCal);
+    lcd.setCursor(15, 0);
+    lcd.write(CLICK);
+
+    moveToSecondLine();
+    lcd.print("  ");
+    lcd.print(xMaxCal);
+    lcd.print("  ");
+    lcd.print(yMaxCal);
+    lcd.print("  ");
+    lcd.print(zMaxCal);
 
     resetCounter();
   }
@@ -658,6 +726,14 @@ void moveToSecondLine() {
 }
 
 
+void clearScreen() {
+  moveToFirstLine();
+  lcd.print("                ");
+  moveToSecondLine();
+  lcd.print("                ");
+}
+
+
 void increaseBrightness() {
   brightness += BRIGHTNESS_INCREMENT;
   if (brightness > MAX_BRIGHTNESS) {
@@ -712,9 +788,9 @@ void getIncline(int &pitch, int &roll, bool shortCircuit) {
   int zAvg = zTotal / samples;
 
   // convert to range of -90 to +90 degrees
-  int xAng = map(xAvg, X_MIN, X_MAX, -90, 90);
-  int yAng = map(yAvg, Y_MIN, Y_MAX, -90, 90);
-  int zAng = map(zAvg, Z_MIN, Z_MAX, -90, 90);
+  int xAng = map(xAvg, xMin, xMax, -90, 90);
+  int yAng = map(yAvg, yMin, yMax, -90, 90);
+  int zAng = map(zAvg, zMin, zMax, -90, 90);
 
   // convert radians to degrees
   int pitchOut = -(RAD_TO_DEG * (atan2(-yAng, -zAng) + PI));
@@ -772,7 +848,24 @@ void displayIncline(int first, int second) {
 
   centerText(firstString, 8, true);
   centerText(secondString, 8, false);
+}
 
+
+// saves min/max x/y/z to EEPROM
+void saveIncCalibration() {
+  EEPROM.writeInt(X_MIN_ADDRESS, xMinCal);
+  EEPROM.writeInt(X_MAX_ADDRESS, xMaxCal);
+  EEPROM.writeInt(Y_MIN_ADDRESS, yMinCal);
+  EEPROM.writeInt(Y_MAX_ADDRESS, yMaxCal);
+  EEPROM.writeInt(Z_MIN_ADDRESS, zMinCal);
+  EEPROM.writeInt(Z_MAX_ADDRESS, zMaxCal);
+
+  xMin = xMinCal;
+  xMax = xMaxCal;
+  yMin = yMinCal;
+  yMax = yMaxCal;
+  zMin = zMinCal;
+  zMax = zMaxCal;
 }
 
 
