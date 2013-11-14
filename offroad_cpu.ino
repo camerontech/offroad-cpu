@@ -57,9 +57,15 @@ int brightness;
 /////////////////////
 // Three-way button
 /////////////////////
-const uint8_t UP = 13;
-const uint8_t PUSH = 12;
+
+// Standard arduinos don't work very well with a pull-down resistor on pin 13
+// since it has a built-in LED. So we use pins 10, 11, 12 when developing
+// against an actual arduino board. For the production board these should be
+// 11, 12, 13.
 const uint8_t DOWN = 11;
+const uint8_t PUSH = 12;
+const uint8_t UP = 13;
+
 
 uint8_t lastState = 0;
 uint8_t buttonState = 0;
