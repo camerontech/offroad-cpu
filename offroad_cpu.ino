@@ -7,7 +7,7 @@
 #include <HMC5883L.h>
 
 
-const int VERSION = 1;
+const uint8_t VERSION = 2;
 
 unsigned long millisCounter = 0;
 unsigned long minMaxAltitudeMillsCounter = 0;
@@ -16,6 +16,7 @@ unsigned long minMaxAltitudeMillsCounter = 0;
 const String menuText[][2] = {{"Incline        ","               "},
                               {"Altitude       ","               "},
                               {"Compass        ","               "},
+                              {"Multi          ","               "},
                               {"Temperature    ","               "},
                               {"Track          ","Altitude       "},
                               {"Min/Max        ","Altitude       "},
@@ -23,29 +24,30 @@ const String menuText[][2] = {{"Incline        ","               "},
                               {"Calibrate      ","Inclinometer   "},
                               {"Set            ","Brightness     "},
                               {"Factory        ","Reset          "}};
-const unsigned int INCLINE = 0;
-const unsigned int ALTITUDE = 1;
-const unsigned int COMPASS = 2;
-const unsigned int TEMPERATURE = 3;
-const unsigned int TRACK = 4;
-const unsigned int MINMAX = 5;
-const unsigned int CALIBRATE_ALT = 6;
-const unsigned int CALIBRATE_INC = 7;
-const unsigned int BRIGHTNESS = 8;
-const unsigned int RESET = 9;
-const unsigned int MENU = 10;
-const unsigned int MENU_LENGTH = 10;
+const uint8_t INCLINE = 0;
+const uint8_t ALTITUDE = 1;
+const uint8_t COMPASS = 2;
+const uint8_t MULTI = 3;
+const uint8_t TEMPERATURE = 4;
+const uint8_t TRACK = 5;
+const uint8_t MINMAX = 6;
+const uint8_t CALIBRATE_ALT = 7;
+const uint8_t CALIBRATE_INC = 8;
+const uint8_t BRIGHTNESS = 9;
+const uint8_t RESET = 10;
+const uint8_t MENU = 11;
+const uint8_t MENU_LENGTH = 11;
 
 // Keep track of where we are
-int mode;
-int displayMenuItem;
-int lastMode;
+uint8_t mode;
+int8_t displayMenuItem;
+uint8_t lastMode;
 
 // Display in (m)etric or (i)mperial
 char unit;
 
 // Display character for brightness meter
-const unsigned int BLOCK_CHAR = 255;
+const int BLOCK_CHAR = 255;
 const int MAX_BRIGHTNESS = 255;
 const int MIN_BRIGHTNESS = 1;
 const int BRIGHTNESS_INCREMENT = 32;
@@ -55,12 +57,12 @@ int brightness;
 /////////////////////
 // Three-way button
 /////////////////////
-const unsigned int UP = 12;
-const unsigned int PUSH = 11;
-const unsigned int DOWN = 10;
+const uint8_t UP = 13;
+const uint8_t PUSH = 12;
+const uint8_t DOWN = 11;
 
-int unsigned lastState = 0;
-int unsigned buttonState = 0;
+uint8_t lastState = 0;
+uint8_t buttonState = 0;
 
 
 //////////////////////
@@ -118,34 +120,19 @@ float compassOffset;
 // Display
 ////////////////////
 
-// --- SPECIAL COMMAND DEFINITIONS
-const int BACKLIGHT_COMMAND = 128;    // 0x80
-const int SPECIAL_COMMAND = 254;      // 0xFE
-const int BAUD_COMMAND = 129;         // 0x81
 
-// --- ARDUINO PIN DEFINITIONS
-uint8_t RSPin = 0;
-uint8_t RWPin = 1;
-uint8_t ENPin = 4;
-uint8_t D4Pin = 5;
-uint8_t D5Pin = 6;
-uint8_t D6Pin = 7;
-uint8_t D7Pin = 8;
-uint8_t BLPin = 9;
+const uint8_t RSPin = 0;
+const uint8_t RWPin = 1;
+const uint8_t ENPin = 4;
+const uint8_t D4Pin = 5;
+const uint8_t D5Pin = 6;
+const uint8_t D6Pin = 7;
+const uint8_t D7Pin = 8;
+const uint8_t BACKLIGHT_PIN = 9;
 
-char inKey;                     // Character received from serial input
-uint8_t Cursor = 0;             // Position of cursor, 0 is top left, (rows*columns)-1 is bottom right
-uint8_t LCDOnOff = 1;           // 0 if LCD is off
-uint8_t blinky = 0;             // Is 1 if blinky cursor is on
-uint8_t underline = 0;          // Is 1 if underline cursor is on
-uint8_t splashScreenEnable = 1; // 1 means splash screen is enabled
-uint8_t rows = 2;               // Number rows, will be either 2 or 4
-uint8_t columns = 16;           // Number of columns, will be 16 or 20
-uint8_t characters;             // rows * columns
-
-// initialize the LCD at pins defined above
 LiquidCrystal lcd(RSPin, RWPin, ENPin, D4Pin, D5Pin, D6Pin, D7Pin);
 
+byte UP_ARROW = 0;
 byte upArrow[8] = {
   B00000,
   B00100,
@@ -157,6 +144,7 @@ byte upArrow[8] = {
   B00000
 };
 
+byte DOWN_ARROW = 1;
 byte downArrow[8] = {
   B00000,
   B00000,
@@ -168,6 +156,7 @@ byte downArrow[8] = {
   B00000
 };
 
+byte DEGREE = 2;
 byte degree[8] = {
   B01100,
   B10010,
@@ -179,6 +168,7 @@ byte degree[8] = {
   B00000
 };
 
+byte FOOT = 3;
 byte foot[8] = {
   B01000,
   B01000,
@@ -190,6 +180,7 @@ byte foot[8] = {
   B00000
 };
 
+byte CLICK = 4;
 byte click[8] = {
   B00000,
   B00000,
@@ -201,11 +192,20 @@ byte click[8] = {
   B00000
 };
 
-byte UP_ARROW = 0;
-byte DOWN_ARROW = 1;
-byte DEGREE = 2;
-byte FOOT = 3;
-byte CLICK = 4;
+byte PITCH_ARROW = 5;
+byte pitchArrow[8] = {
+  B00100,
+  B01110,
+  B10101,
+  B00100,
+  B00100,
+  B10101,
+  B01110,
+  B00100
+};
+
+
+
 
 
 ///////////////////////////
@@ -278,6 +278,8 @@ void loop() {
     loopCompass();
   } else if (mode == TRACK) {
     loopTrack();
+  } else if (mode == MULTI) {
+    loopMulti();
   } else if (mode == MINMAX) {
     loopMinMax();
   } else if (mode == CALIBRATE_ALT) {
@@ -353,14 +355,15 @@ void setupDisplay() {
   lcd.begin(16, 2);
 
   // custom characters
-  lcd.createChar(0, upArrow);
-  lcd.createChar(1, downArrow);
-  lcd.createChar(2, degree);
-  lcd.createChar(3, foot);
-  lcd.createChar(4, click);
+  lcd.createChar(UP_ARROW, upArrow);
+  lcd.createChar(DOWN_ARROW, downArrow);
+  lcd.createChar(DEGREE, degree);
+  lcd.createChar(FOOT, foot);
+  lcd.createChar(CLICK, click);
+  lcd.createChar(PITCH_ARROW, pitchArrow);
 
   // Set up the backlight
-  pinMode(BLPin, OUTPUT);
+  pinMode(BACKLIGHT_PIN, OUTPUT);
   brightness = EEPROM.readInt(LCD_BACKLIGHT_ADDRESS);
   setBrightness();
 
@@ -370,6 +373,7 @@ void setupDisplay() {
   moveToSecondLine();
   lcd.print("  Offroad CPU   ");
   delay(2000);
+  clearScreen();
 }
 
 
@@ -569,11 +573,65 @@ void loopCompass() {
     lcd.print("     Heading   ");
     lcd.write(CLICK);
     moveToSecondLine();
-    outputHeading(heading);
+    outputHeadingLine(heading);
 
     resetCounter();
   }
 
+}
+
+void loopMulti() {
+  if (millis() - millisCounter > 250) {
+
+    moveToFirstLine();
+
+    // incline
+    int x, y;
+    getIncline(x, y, false);
+    displayIncline(y, x);
+
+    // Draw pitch/roll arrows
+    lcd.setCursor(0,0);
+    lcd.write(PITCH_ARROW);
+    lcd.setCursor(14,0);
+    lcd.write(127);  // left arrow
+    lcd.setCursor(15,0);
+    lcd.write(126);  // right arrow
+
+    moveToSecondLine();
+
+    // altitude
+    centerText(altitudeWithUnit(getAltitude()), 9);
+
+    lcd.setCursor(9, 1);
+
+    // compass
+    centerText(degreeToCardinal(getHeading()), 7);
+
+    resetCounter();
+  }
+
+}
+
+void loopTemperature() {
+  if (millis() - millisCounter > 1000) {
+    String output;
+    moveToFirstLine();
+    lcd.print("  Temperature  ");
+    lcd.write(CLICK);
+    moveToSecondLine();
+
+    float temperature = getTemperature();
+
+    if (unit == 'i') {
+      output = floatToString(temperature*9/5+32, 1) + char(DEGREE) + 'F';
+    } else {
+      output = floatToString(temperature, 1) + char(DEGREE) + 'C';
+    }
+    centerText(output, 16);
+
+    resetCounter();
+  }
 }
 
 void loopTrack() {
@@ -647,27 +705,6 @@ void loopCalibrateInc() {
     lcd.print(yMaxCal);
     lcd.print("  ");
     lcd.print(zMaxCal);
-
-    resetCounter();
-  }
-}
-
-void loopTemperature() {
-  if (millis() - millisCounter > 1000) {
-    String output;
-    moveToFirstLine();
-    lcd.print("  Temperature  ");
-    lcd.write(CLICK);
-    moveToSecondLine();
-
-    float temperature = getTemperature();
-
-    if (unit == 'i') {
-      output = floatToString(temperature*9/5+32, 1) + char(DEGREE) + 'F';
-    } else {
-      output = floatToString(temperature, 1) + char(DEGREE) + 'C';
-    }
-    centerText(output, 16);
 
     resetCounter();
   }
@@ -753,7 +790,7 @@ void decreaseBrightness() {
 
 
 void setBrightness() {
-  analogWrite(BLPin, brightness);
+  analogWrite(BACKLIGHT_PIN, brightness);
 }
 
 
@@ -843,11 +880,11 @@ void zeroInclinometer() {
 // Writes the current pitch/roll to the screen
 void displayIncline(int first, int second) {
   // convert int values to strings for output
-  String firstString = String(first) + char(DEGREE);
-  String secondString = String(second) + char(DEGREE);
+  // String firstString = String(first);// + char(DEGREE);
+  // String secondString = String(second);// + char(DEGREE);
 
-  centerText(firstString, 8, true);
-  centerText(secondString, 8, false);
+  centerText(String(first), 8, true, char(DEGREE));
+  centerText(String(second), 8, false, char(DEGREE));
 }
 
 
@@ -1045,7 +1082,18 @@ float getHeading() {
   if (heading < 0) {
     heading += 2 * M_PI;
   }
-  return heading * 180 / M_PI;
+  heading = heading * 180 / M_PI;
+
+  // remove offset from heading
+  float headingWithOffset = heading - compassOffset;
+
+  if (headingWithOffset > 359) {
+    headingWithOffset -= 360;
+  } else if (headingWithOffset < 0) {
+    headingWithOffset += 360;
+  }
+
+  return headingWithOffset;
 }
 
 // Converts degrees to a cardinal direction (N, NE, etc)
@@ -1070,23 +1118,15 @@ String degreeToCardinal(float heading) {
 
 // Saves a compass offset for zeroing
 void zeroCompass() {
+  compassOffset = 0;
   compassOffset = getHeading();
   EEPROM.writeFloat(COMPASS_OFFSET_ADDRESS, compassOffset);
 }
 
 // Writes the compass to the screen
-void outputHeading(float heading) {
-  // remove offset from heading
-  float headingWithOffset = heading - compassOffset;
-
-  if (headingWithOffset > 359) {
-    headingWithOffset -= 360;
-  } else if (headingWithOffset < 0) {
-    headingWithOffset += 360;
-  }
-
-  String degree = String(int(headingWithOffset)) + char(DEGREE);
-  String cardinal = degreeToCardinal(headingWithOffset);
+void outputHeadingLine(float heading) {
+  String degree = String(int(heading)) + char(DEGREE);
+  String cardinal = degreeToCardinal(heading);
 
   centerText(cardinal, 8);
   centerText(degree, 8);
@@ -1101,23 +1141,28 @@ void outputHeading(float heading) {
 // Centers an integer
 void centerText(int num, int width) {
   String text = String(num);
-  centerString(text, width, false);
+  centerString(text, width, false, NULL);
 }
 
 // Centers a float
 void centerText(float num, int decimals, int width) {
   String text = floatToString(num, decimals);
-  centerString(text, width, false);
+  centerString(text, width, false, NULL);
 }
 
 // Centers a string
 void centerText(String text, int width) {
-  centerString(text, width, false);
+  centerString(text, width, false, NULL);
 }
 
 // Centers a string
 void centerText(String text, int width, bool prependWhiteSpace) {
-  centerString(text, width, prependWhiteSpace);
+  centerString(text, width, prependWhiteSpace, NULL);
+}
+
+// Centers a string with a special character on the end
+void centerText(String text, int width, bool prependWhiteSpace, char specialChar) {
+  centerString(text, width, prependWhiteSpace, specialChar);
 }
 
 // Converts a floating point number to a string
@@ -1133,8 +1178,11 @@ String floatToString(float num, int decimals) {
 }
 
 // Takes a string and outputs it centered within the given width
-void centerString(String text, int width, bool prependWhiteSpace) {
+void centerString(String text, int width, bool prependWhiteSpace, char specialChar) {
   int textLength = text.length();
+  if (specialChar != NULL) {
+    textLength += 1;
+  }
   int totalWhiteSpace = width - textLength;
   int left = totalWhiteSpace / 2;
   int right = left;
@@ -1151,6 +1199,9 @@ void centerString(String text, int width, bool prependWhiteSpace) {
   }
 
   lcd.print(text);
+  if (specialChar != NULL) {
+    lcd.write(specialChar);
+  }
 
   for (int i=0; i<right; i++) {
     lcd.print(" ");
