@@ -594,7 +594,9 @@ void loopMulti() {
     // incline
     int x, y;
     getIncline(x, y, false);
-    displayIncline(y, x);
+    lcd.print(" ");
+    centerText(String(y), 7, true, char(DEGREE));
+    centerText(String(x), 7, false, char(DEGREE));
 
     // Draw pitch/roll arrows
     lcd.setCursor(0,0);
@@ -885,10 +887,6 @@ void zeroInclinometer() {
 
 // Writes the current pitch/roll to the screen
 void displayIncline(int first, int second) {
-  // convert int values to strings for output
-  // String firstString = String(first);// + char(DEGREE);
-  // String secondString = String(second);// + char(DEGREE);
-
   centerText(String(first), 8, true, char(DEGREE));
   centerText(String(second), 8, false, char(DEGREE));
 }
