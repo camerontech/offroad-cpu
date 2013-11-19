@@ -7,7 +7,7 @@
 #include <HMC5883L.h>
 
 
-const uint8_t VERSION = 2;
+const int VERSION = 1;
 
 unsigned long millisCounter = 0;
 unsigned long minMaxAltitudeMillsCounter = 0;
@@ -24,24 +24,24 @@ const String menuText[][2] = {{"Incline        ","               "},
                               {"Calibrate      ","Inclinometer   "},
                               {"Set            ","Brightness     "},
                               {"Factory        ","Reset          "}};
-const uint8_t INCLINE = 0;
-const uint8_t ALTITUDE = 1;
-const uint8_t COMPASS = 2;
-const uint8_t MULTI = 3;
-const uint8_t TEMPERATURE = 4;
-const uint8_t TRACK = 5;
-const uint8_t MINMAX = 6;
-const uint8_t CALIBRATE_ALT = 7;
-const uint8_t CALIBRATE_INC = 8;
-const uint8_t BRIGHTNESS = 9;
-const uint8_t RESET = 10;
-const uint8_t MENU = 11;
-const uint8_t MENU_LENGTH = 11;
+const int INCLINE = 0;
+const int ALTITUDE = 1;
+const int COMPASS = 2;
+const int MULTI = 3;
+const int TEMPERATURE = 4;
+const int TRACK = 5;
+const int MINMAX = 6;
+const int CALIBRATE_ALT = 7;
+const int CALIBRATE_INC = 8;
+const int BRIGHTNESS = 9;
+const int RESET = 10;
+const int MENU = 11;
+const int MENU_LENGTH = 11;
 
 // Keep track of where we are
-uint8_t mode;
+int mode;
 int8_t displayMenuItem;
-uint8_t lastMode;
+int lastMode;
 
 // Display in (m)etric or (i)mperial
 char unit;
@@ -57,12 +57,12 @@ int brightness;
 /////////////////////
 // Three-way button
 /////////////////////
-const uint8_t UP = 13;
-const uint8_t PUSH = 12;
-const uint8_t DOWN = 11;
+const int UP = 13;
+const int PUSH = 12;
+const int DOWN = 11;
 
-uint8_t lastState = 0;
-uint8_t buttonState = 0;
+int lastState = 0;
+int buttonState = 0;
 
 
 //////////////////////
@@ -121,91 +121,22 @@ float compassOffset;
 ////////////////////
 
 
-const uint8_t RSPin = 0;
-const uint8_t RWPin = 1;
-const uint8_t ENPin = 4;
-const uint8_t D4Pin = 5;
-const uint8_t D5Pin = 6;
-const uint8_t D6Pin = 7;
-const uint8_t D7Pin = 8;
-const uint8_t BACKLIGHT_PIN = 9;
+const int RSPin = 0;
+const int RWPin = 1;
+const int ENPin = 4;
+const int D4Pin = 5;
+const int D5Pin = 6;
+const int D6Pin = 7;
+const int D7Pin = 8;
+const int BACKLIGHT_PIN = 9;
 
 LiquidCrystal lcd(RSPin, RWPin, ENPin, D4Pin, D5Pin, D6Pin, D7Pin);
 
 byte UP_ARROW = 0;
-byte upArrow[8] = {
-  B00000,
-  B00100,
-  B01110,
-  B11111,
-  B00000,
-  B00000,
-  B00000,
-  B00000
-};
-
 byte DOWN_ARROW = 1;
-byte downArrow[8] = {
-  B00000,
-  B00000,
-  B00000,
-  B00000,
-  B11111,
-  B01110,
-  B00100,
-  B00000
-};
-
 byte DEGREE = 2;
-byte degree[8] = {
-  B01100,
-  B10010,
-  B10010,
-  B01100,
-  B00000,
-  B00000,
-  B00000,
-  B00000
-};
-
 byte FOOT = 3;
-byte foot[8] = {
-  B01000,
-  B01000,
-  B00000,
-  B00000,
-  B00000,
-  B00000,
-  B00000,
-  B00000
-};
-
-byte CLICK = 4;
-byte click[8] = {
-  B00000,
-  B00000,
-  B00100,
-  B01110,
-  B00100,
-  B00000,
-  B00000,
-  B00000
-};
-
-byte PITCH_ARROW = 5;
-byte pitchArrow[8] = {
-  B00100,
-  B01110,
-  B10101,
-  B00100,
-  B00100,
-  B10101,
-  B01110,
-  B00100
-};
-
-
-
+byte PITCH_ARROW = 4;
 
 
 ///////////////////////////
@@ -354,12 +285,62 @@ void setupVariables() {
 void setupDisplay() {
   lcd.begin(16, 2);
 
+  byte upArrow[8] = {
+    B00000,
+    B00100,
+    B01110,
+    B11111,
+    B00000,
+    B00000,
+    B00000,
+    B00000
+  };
+  byte downArrow[8] = {
+    B00000,
+    B00000,
+    B00000,
+    B00000,
+    B11111,
+    B01110,
+    B00100,
+    B00000
+  };
+  byte degree[8] = {
+    B01100,
+    B10010,
+    B10010,
+    B01100,
+    B00000,
+    B00000,
+    B00000,
+    B00000
+  };
+  byte foot[8] = {
+    B01000,
+    B01000,
+    B00000,
+    B00000,
+    B00000,
+    B00000,
+    B00000,
+    B00000
+  };
+  byte pitchArrow[8] = {
+    B00100,
+    B01110,
+    B10101,
+    B00100,
+    B00100,
+    B10101,
+    B01110,
+    B00100
+  };
+
   // custom characters
   lcd.createChar(UP_ARROW, upArrow);
   lcd.createChar(DOWN_ARROW, downArrow);
   lcd.createChar(DEGREE, degree);
   lcd.createChar(FOOT, foot);
-  lcd.createChar(CLICK, click);
   lcd.createChar(PITCH_ARROW, pitchArrow);
 
   // Set up the backlight
@@ -486,9 +467,11 @@ void buttonClick() {
           zeroInclinometer();
         } else if (mode == COMPASS) {
           zeroCompass();
-        } else if (mode = CALIBRATE_INC) {
+        } else if (mode == CALIBRATE_INC) {
           saveIncCalibration();
           returnToLastMode();
+        } else if (mode == MULTI) {
+
         }
       }
     }
@@ -524,9 +507,11 @@ void loopMenu() {
   if (millis() - millisCounter > 250) {
     moveToFirstLine();
     lcd.print(menuText[displayMenuItem][0]);
+    lcd.setCursor(15, 0);
     lcd.write(UP_ARROW);
     moveToSecondLine();
     lcd.print(menuText[displayMenuItem][1]);
+    lcd.setCursor(15, 1);
     lcd.write(DOWN_ARROW);
 
     resetCounter();
@@ -537,8 +522,7 @@ void loopInclinometer() {
   if (millis() - millisCounter > 250) {
 
     moveToFirstLine();
-    lcd.print("  Pitch   Roll ");
-    lcd.write(CLICK);
+    lcd.print("  Pitch   Roll  ");
     moveToSecondLine();
 
     int pitch, roll;
@@ -554,8 +538,7 @@ void loopAltimeter() {
   if (millis() - millisCounter > 250) {
 
     moveToFirstLine();
-    lcd.print("    Altitude   ");
-    lcd.write(CLICK);
+    lcd.print("    Altitude    ");
     moveToSecondLine();
     outputAltitudeLine(false, NULL);
 
@@ -570,8 +553,7 @@ void loopCompass() {
     float heading = getHeading();
 
     moveToFirstLine();
-    lcd.print("     Heading   ");
-    lcd.write(CLICK);
+    lcd.print("     Heading    ");
     moveToSecondLine();
     outputHeadingLine(heading);
 
@@ -617,8 +599,7 @@ void loopTemperature() {
   if (millis() - millisCounter > 1000) {
     String output;
     moveToFirstLine();
-    lcd.print("  Temperature  ");
-    lcd.write(CLICK);
+    lcd.print("  Temperature   ");
     moveToSecondLine();
 
     float temperature = getTemperature();
@@ -637,8 +618,7 @@ void loopTemperature() {
 void loopTrack() {
   if (millis() - millisCounter > 500) {
     moveToFirstLine();
-    lcd.print("Track Altitude ");
-    lcd.write(CLICK);
+    lcd.print(" Track Altitude ");
     moveToSecondLine();
     outputAltitudeLine(true, NULL);
     resetCounter();
@@ -648,8 +628,7 @@ void loopTrack() {
 void loopMinMax() {
   if (millis() - millisCounter > 500) {
     moveToFirstLine();
-    lcd.print("   Min    Max  ");
-    lcd.write(CLICK);
+    lcd.print("   Min    Max   ");
     moveToSecondLine();
     centerText(altitudeWithUnit(minAltitude), 8, true);
     centerText(altitudeWithUnit(maxAltitude), 8, false);
@@ -695,8 +674,6 @@ void loopCalibrateInc() {
     lcd.print(yMinCal);
     lcd.print(" ");
     lcd.print(zMinCal);
-    lcd.setCursor(15, 0);
-    lcd.write(CLICK);
 
     moveToSecondLine();
     lcd.print("  ");
