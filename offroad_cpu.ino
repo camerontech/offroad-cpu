@@ -4,7 +4,6 @@
 #include <I2Cdev.h>
 #include <BMP085.h>
 #include <ADXL345.h>
-#include <HMC5883L.h>
 
 
 const byte VERSION = 1;
@@ -102,13 +101,6 @@ float maxAltitude;
 
 // convert from meters to feet
 float metersToFeet = 3.28084;
-
-
-
-////////////////////
-// Magnetometer
-////////////////////
-HMC5883L mag;
 
 
 
