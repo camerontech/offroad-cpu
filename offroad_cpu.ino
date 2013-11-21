@@ -7,7 +7,7 @@
 #include <HMC5883L.h>
 
 
-const int VERSION = 1;
+const byte VERSION = 1;
 
 unsigned long millisCounter = 0;
 unsigned long minMaxAltitudeMillsCounter = 0;
@@ -15,51 +15,49 @@ unsigned long minMaxAltitudeMillsCounter = 0;
 // Menu and display modes
 const String menuText[][2] = {{"Incline        ","               "},
                               {"Altitude       ","               "},
-                              {"Compass        ","               "},
                               {"Multi          ","               "},
                               {"Temperature    ","               "},
                               {"Track          ","Altitude       "},
                               {"Min/Max        ","Altitude       "},
-                              {"Calibrate      ","Altitude       "},
+                              {"Calibrate      ","Altimeter      "},
                               {"Calibrate      ","Inclinometer   "},
                               {"Set            ","Brightness     "},
                               {"Factory        ","Reset          "}};
-const int INCLINE = 0;
-const int ALTITUDE = 1;
-const int COMPASS = 2;
-const int MULTI = 3;
-const int TEMPERATURE = 4;
-const int TRACK = 5;
-const int MINMAX = 6;
-const int CALIBRATE_ALT = 7;
-const int CALIBRATE_INC = 8;
-const int BRIGHTNESS = 9;
-const int RESET = 10;
-const int MENU = 11;
-const int MENU_LENGTH = 11;
+const byte INCLINE = 0;
+const byte ALTITUDE = 1;
+const byte MULTI = 2;
+const byte TEMPERATURE = 3;
+const byte TRACK = 4;
+const byte MINMAX = 5;
+const byte CALIBRATE_ALT = 6;
+const byte CALIBRATE_INC = 7;
+const byte BRIGHTNESS = 8;
+const byte RESET = 9;
+const byte MENU = 10;
+const byte MENU_LENGTH = 10;
 
 // Keep track of where we are
 int mode;
-int8_t displayMenuItem;
+int displayMenuItem;
 int lastMode;
 
 // Display in (m)etric or (i)mperial
 char unit;
 
 // Display character for brightness meter
-const int BLOCK_CHAR = 255;
-const int MAX_BRIGHTNESS = 255;
-const int MIN_BRIGHTNESS = 1;
-const int BRIGHTNESS_INCREMENT = 32;
+const byte BLOCK_CHAR = 255;
+const byte MAX_BRIGHTNESS = 255;
+const byte MIN_BRIGHTNESS = 1;
+const byte BRIGHTNESS_INCREMENT = 32;
 int brightness;
 
 
 /////////////////////
 // Three-way button
 /////////////////////
-const int UP = 13;
-const int PUSH = 12;
-const int DOWN = 11;
+const byte UP = 13;
+const byte PUSH = 12;
+const byte DOWN = 11;
 
 int lastState = 0;
 int buttonState = 0;
@@ -112,8 +110,6 @@ float metersToFeet = 3.28084;
 ////////////////////
 HMC5883L mag;
 
-float compassOffset;
-
 
 
 ////////////////////
@@ -121,22 +117,24 @@ float compassOffset;
 ////////////////////
 
 
-const int RSPin = 0;
-const int RWPin = 1;
-const int ENPin = 4;
-const int D4Pin = 5;
-const int D5Pin = 6;
-const int D6Pin = 7;
-const int D7Pin = 8;
-const int BACKLIGHT_PIN = 9;
+const byte RSPin = 0;
+const byte RWPin = 1;
+const byte ENPin = 4;
+const byte D4Pin = 5;
+const byte D5Pin = 6;
+const byte D6Pin = 7;
+const byte D7Pin = 8;
+const byte BACKLIGHT_PIN = 9;
 
 LiquidCrystal lcd(RSPin, RWPin, ENPin, D4Pin, D5Pin, D6Pin, D7Pin);
 
-byte UP_ARROW = 0;
-byte DOWN_ARROW = 1;
-byte DEGREE = 2;
-byte FOOT = 3;
-byte PITCH_ARROW = 4;
+const byte UP_ARROW = 0;
+const byte DOWN_ARROW = 1;
+const byte DEGREE = 2;
+const byte FOOT = 3;
+const byte PITCH_ARROW = 4;
+const byte LEFT_ARROW = 127;
+const byte RIGHT_ARROW = 126;
 
 
 ///////////////////////////
@@ -157,7 +155,6 @@ const int PITCH_OFFSET_ADDRESS = EEPROM.getAddress(sizeof(int));                
 const int ROLL_OFFSET_ADDRESS = EEPROM.getAddress(sizeof(int));                 // roll degree offset
 const int MODE_ADDRESS = EEPROM.getAddress(sizeof(int));                        // which menu item is showing
 const int CALIBRATE_ALTITUDE_OFFSET_ADDRESS = EEPROM.getAddress(sizeof(float)); // altitude offset
-const int COMPASS_OFFSET_ADDRESS = EEPROM.getAddress(sizeof(float));            // compass offset
 
 // inclinometer calibrate
 const int X_MIN_ADDRESS = EEPROM.getAddress(sizeof(int));
@@ -205,8 +202,6 @@ void loop() {
     loopInclinometer();
   } else if (mode == ALTITUDE) {
     loopAltimeter();
-  } else if (mode == COMPASS) {
-    loopCompass();
   } else if (mode == TRACK) {
     loopTrack();
   } else if (mode == MULTI) {
@@ -244,7 +239,6 @@ void memoryReset() {
   EEPROM.writeInt(ROLL_OFFSET_ADDRESS, 0);                   // no roll offset
   EEPROM.writeInt(MODE_ADDRESS, INCLINE);                    // default to inclinometer
   EEPROM.writeFloat(CALIBRATE_ALTITUDE_OFFSET_ADDRESS, 0.0); // no altitude offset
-  EEPROM.writeFloat(COMPASS_OFFSET_ADDRESS, 0.0);            // no compass offset
 
   // Default inclinometer settings, hopefully user calibrates manually
   EEPROM.writeInt(X_MIN_ADDRESS, -272);
@@ -272,7 +266,6 @@ void setupVariables() {
   mode = displayMenuItem = EEPROM.readInt(MODE_ADDRESS);
   calibrateAltitudeOffset = EEPROM.readFloat(CALIBRATE_ALTITUDE_OFFSET_ADDRESS);
   calibrateAltitudeDisplay = NULL;
-  compassOffset = EEPROM.readFloat(COMPASS_OFFSET_ADDRESS);
 
   xMin = EEPROM.readInt(X_MIN_ADDRESS);
   xMax = EEPROM.readInt(X_MAX_ADDRESS);
@@ -465,8 +458,6 @@ void buttonClick() {
           switchUnit();
         } else if (mode == INCLINE) {   // Button clicked while viewing incline
           zeroInclinometer();
-        } else if (mode == COMPASS) {
-          zeroCompass();
         } else if (mode == CALIBRATE_INC) {
           saveIncCalibration();
           returnToLastMode();
@@ -547,21 +538,6 @@ void loopAltimeter() {
 }
 
 
-void loopCompass() {
-  if (millis() - millisCounter > 500) {
-
-    float heading = getHeading();
-
-    moveToFirstLine();
-    lcd.print("     Heading    ");
-    moveToSecondLine();
-    outputHeadingLine(heading);
-
-    resetCounter();
-  }
-
-}
-
 void loopMulti() {
   if (millis() - millisCounter > 250) {
 
@@ -570,25 +546,26 @@ void loopMulti() {
     // incline
     int x, y;
     getIncline(x, y, false);
-    displayIncline(y, x);
+    // displayIncline(y, x);
+
+    lcd.print(" ");
+    centerText(String(y), 6, true, char(DEGREE));
+    lcd.print("  ");
+    centerText(String(x), 6, false, char(DEGREE));
+
 
     // Draw pitch/roll arrows
     lcd.setCursor(0,0);
     lcd.write(PITCH_ARROW);
     lcd.setCursor(14,0);
-    lcd.write(127);  // left arrow
+    lcd.write(LEFT_ARROW);  // left arrow
     lcd.setCursor(15,0);
-    lcd.write(126);  // right arrow
+    lcd.write(RIGHT_ARROW);  // right arrow
 
     moveToSecondLine();
 
     // altitude
-    centerText(altitudeWithUnit(getAltitude()), 9);
-
-    lcd.setCursor(9, 1);
-
-    // compass
-    centerText(degreeToCardinal(getHeading()), 7);
+    centerText(altitudeWithUnit(getAltitude()), 16);
 
     resetCounter();
   }
@@ -856,10 +833,6 @@ void zeroInclinometer() {
 
 // Writes the current pitch/roll to the screen
 void displayIncline(int first, int second) {
-  // convert int values to strings for output
-  // String firstString = String(first);// + char(DEGREE);
-  // String secondString = String(second);// + char(DEGREE);
-
   centerText(String(first), 8, true, char(DEGREE));
   centerText(String(second), 8, false, char(DEGREE));
 }
@@ -1043,70 +1016,6 @@ void saveAltitudeCalibration() {
 
   // Save to EEPROM
   EEPROM.writeFloat(CALIBRATE_ALTITUDE_OFFSET_ADDRESS, calibrateAltitudeOffset);
-}
-
-
-
-///////////////////////
-// Compass functions
-///////////////////////
-
-// Returns degree heading
-float getHeading() {
-  int x, y, z;
-  mag.getHeading(&x, &y, &z);
-  float heading = atan2(y, x);
-  if (heading < 0) {
-    heading += 2 * M_PI;
-  }
-  heading = heading * 180 / M_PI;
-
-  // remove offset from heading
-  float headingWithOffset = heading - compassOffset;
-
-  if (headingWithOffset > 359) {
-    headingWithOffset -= 360;
-  } else if (headingWithOffset < 0) {
-    headingWithOffset += 360;
-  }
-
-  return headingWithOffset;
-}
-
-// Converts degrees to a cardinal direction (N, NE, etc)
-String degreeToCardinal(float heading) {
-  if (heading > 337.5 || heading <= 22.5)
-    return "N";
-  else if (heading > 22.5 && heading <= 67.5)
-    return "NE";
-  else if (heading > 67.5 && heading <= 112.5)
-    return "E";
-  else if (heading > 112.5 && heading <= 157.5)
-    return "SE";
-  else if (heading > 157.5 && heading <= 202.5)
-    return "S";
-  else if (heading > 202.5 && heading <= 247.5)
-    return "SW";
-  else if (heading > 247.5 && heading <= 292.5)
-    return "W";
-  else if (heading > 292.5 && heading <= 337.5)
-    return "NW";
-}
-
-// Saves a compass offset for zeroing
-void zeroCompass() {
-  compassOffset = 0;
-  compassOffset = getHeading();
-  EEPROM.writeFloat(COMPASS_OFFSET_ADDRESS, compassOffset);
-}
-
-// Writes the compass to the screen
-void outputHeadingLine(float heading) {
-  String degree = String(int(heading)) + char(DEGREE);
-  String cardinal = degreeToCardinal(heading);
-
-  centerText(cardinal, 8);
-  centerText(degree, 8);
 }
 
 
