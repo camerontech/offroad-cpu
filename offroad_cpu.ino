@@ -45,9 +45,9 @@ char unit;
 /////////////////////
 // Three-way button
 /////////////////////
-const byte UP = 12;
-const byte PUSH = 11;
-const byte DOWN = 10;
+const byte UP = 13;
+const byte PUSH = 12;
+const byte DOWN = 11;
 
 int lastState = 0;
 int buttonState = 0;
