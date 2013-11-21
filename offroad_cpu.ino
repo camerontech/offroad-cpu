@@ -4,7 +4,6 @@
 #include <I2Cdev.h>
 #include <BMP085.h>
 #include <ADXL345.h>
-#include <HMC5883L.h>
 
 
 const byte VERSION = 1;
@@ -97,13 +96,6 @@ float metersToFeet = 3.28084;
 
 
 ////////////////////
-// Magnetometer
-////////////////////
-HMC5883L mag;
-
-
-
-////////////////////
 // Display
 ////////////////////
 
@@ -171,7 +163,6 @@ void setup() {
   setupButton();
   setupAccelerometer();
   setupBarometer();
-  setupMagnetometer();
 
   // Holding the switch in the down position at startup performs a factory reset
   if (digitalRead(DOWN) == LOW) {
@@ -322,9 +313,9 @@ void setupDisplay() {
 
   // Splash screen
   moveToFirstLine();
-  lcd.print("  Cameron Tech  ");
+  lcd.print(F("  Cameron Tech  "));
   moveToSecondLine();
-  lcd.print("  Offroad CPU   ");
+  lcd.print(F("  Offroad CPU   "));
   delay(2000);
   clearScreen();
 }
@@ -350,11 +341,6 @@ void setupAccelerometer() {
 void setupBarometer() {
   barometer.initialize();
   resetMinMaxAltitude();
-}
-
-
-void setupMagnetometer() {
-  mag.initialize();
 }
 
 
@@ -483,7 +469,7 @@ void loopInclinometer() {
   if (millis() - millisCounter > 50) {
 
     moveToFirstLine();
-    lcd.print("  Pitch   Roll  ");
+    lcd.print(F("  Pitch   Roll  "));
     moveToSecondLine();
 
     int pitch, roll;
@@ -499,7 +485,7 @@ void loopAltimeter() {
   if (millis() - millisCounter > 50) {
 
     moveToFirstLine();
-    lcd.print("    Altitude    ");
+    lcd.print(F("    Altitude    "));
     moveToSecondLine();
     outputAltitudeLine(false, NULL);
 
@@ -520,7 +506,7 @@ void loopMulti() {
     lcd.setCursor(0,0);
     lcd.write(PITCH_ARROW);
     centerText(String(y), 6, true, char(DEGREE));
-    lcd.print("  ");
+    lcd.print(F("  "));
     centerText(String(x), 6, false, char(DEGREE));
     lcd.setCursor(14,0);
     lcd.write(LEFT_ARROW);  // left arrow
@@ -540,7 +526,7 @@ void loopTemperature() {
   if (millis() - millisCounter > 1000) {
     String output;
     moveToFirstLine();
-    lcd.print("  Temperature   ");
+    lcd.print(F("  Temperature   "));
     moveToSecondLine();
 
     float temperature = getTemperature();
@@ -559,7 +545,7 @@ void loopTemperature() {
 void loopTrack() {
   if (millis() - millisCounter > 50) {
     moveToFirstLine();
-    lcd.print(" Track Altitude ");
+    lcd.print(F(" Track Altitude "));
     moveToSecondLine();
     outputAltitudeLine(true, NULL);
     resetCounter();
@@ -569,7 +555,7 @@ void loopTrack() {
 void loopMinMax() {
   if (millis() - millisCounter > 50) {
     moveToFirstLine();
-    lcd.print("   Min    Max   ");
+    lcd.print(F("   Min    Max   "));
     moveToSecondLine();
     centerText(altitudeWithUnit(minAltitude), 8, true);
     centerText(altitudeWithUnit(maxAltitude), 8, false);
@@ -581,7 +567,7 @@ void loopMinMax() {
 void loopCalibrateAlt() {
   if (millis() - millisCounter > 50) {
     moveToFirstLine();
-    lcd.print("  Set Altitude ");
+    lcd.print(F("  Set Altitude "));
     lcd.write(UP_ARROW);
     moveToSecondLine();
 
@@ -609,25 +595,24 @@ void loopCalibrateInc() {
     if (z > zMaxCal) zMaxCal = z;
 
     moveToFirstLine();
-    lcd.print(" ");
+    lcd.print(F(" "));
     lcd.print(xMinCal);
-    lcd.print(" ");
+    lcd.print(F(" "));
     lcd.print(yMinCal);
-    lcd.print(" ");
+    lcd.print(F(" "));
     lcd.print(zMinCal);
 
     moveToSecondLine();
-    lcd.print("  ");
+    lcd.print(F("  "));
     lcd.print(xMaxCal);
-    lcd.print("  ");
+    lcd.print(F("  "));
     lcd.print(yMaxCal);
-    lcd.print("  ");
+    lcd.print(F("  "));
     lcd.print(zMaxCal);
 
     resetCounter();
   }
 }
-
 
 
 
@@ -666,9 +651,9 @@ void moveToSecondLine() {
 
 void clearScreen() {
   moveToFirstLine();
-  lcd.print("                ");
+  lcd.print(F("                "));
   moveToSecondLine();
-  lcd.print("                ");
+  lcd.print(F("                "));
 }
 
 
@@ -999,7 +984,7 @@ void centerString(String text, int width, bool prependWhiteSpace, char specialCh
   }
 
   for (int i=0; i<left; i++) {
-    lcd.print(" ");
+    lcd.print(F(" "));
   }
 
   lcd.print(text);
@@ -1008,7 +993,7 @@ void centerString(String text, int width, bool prependWhiteSpace, char specialCh
   }
 
   for (int i=0; i<right; i++) {
-    lcd.print(" ");
+    lcd.print(F(" "));
   }
 }
 
