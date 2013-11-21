@@ -1,5 +1,5 @@
 #include <Wire.h>
-#include <LiquidCrystal.h>
+#include <Adafruit_CharacterOLED.h>
 #include <EEPROMEx.h>
 #include <I2Cdev.h>
 #include <BMP085.h>
@@ -21,7 +21,6 @@ const String menuText[][2] = {{"Incline        ","               "},
                               {"Min/Max        ","Altitude       "},
                               {"Calibrate      ","Altimeter      "},
                               {"Calibrate      ","Inclinometer   "},
-                              {"Set            ","Brightness     "},
                               {"Factory        ","Reset          "}};
 const byte INCLINE = 0;
 const byte ALTITUDE = 1;
@@ -31,10 +30,9 @@ const byte TRACK = 4;
 const byte MINMAX = 5;
 const byte CALIBRATE_ALT = 6;
 const byte CALIBRATE_INC = 7;
-const byte BRIGHTNESS = 8;
-const byte RESET = 9;
-const byte MENU = 10;
-const byte MENU_LENGTH = 10;
+const byte RESET = 8;
+const byte MENU = 9;
+const byte MENU_LENGTH = 9;
 
 // Keep track of where we are
 int mode;
@@ -44,20 +42,13 @@ int lastMode;
 // Display in (m)etric or (i)mperial
 char unit;
 
-// Display character for brightness meter
-const byte BLOCK_CHAR = 255;
-const byte MAX_BRIGHTNESS = 255;
-const byte MIN_BRIGHTNESS = 1;
-const byte BRIGHTNESS_INCREMENT = 32;
-int brightness;
-
 
 /////////////////////
 // Three-way button
 /////////////////////
-const byte UP = 13;
-const byte PUSH = 12;
-const byte DOWN = 11;
+const byte UP = 12;
+const byte PUSH = 11;
+const byte DOWN = 10;
 
 int lastState = 0;
 int buttonState = 0;
@@ -124,9 +115,8 @@ const byte D4Pin = 5;
 const byte D5Pin = 6;
 const byte D6Pin = 7;
 const byte D7Pin = 8;
-const byte BACKLIGHT_PIN = 9;
 
-LiquidCrystal lcd(RSPin, RWPin, ENPin, D4Pin, D5Pin, D6Pin, D7Pin);
+Adafruit_CharacterOLED lcd(RSPin, RWPin, ENPin, D4Pin, D5Pin, D6Pin, D7Pin);
 
 const byte UP_ARROW = 0;
 const byte DOWN_ARROW = 1;
@@ -142,7 +132,6 @@ const byte RIGHT_ARROW = 126;
 ///////////////////////////
 
 // display
-const int LCD_BACKLIGHT_ADDRESS = EEPROM.getAddress(sizeof(int));               // backlight setting
 const int BAUD_ADDRESS = EEPROM.getAddress(sizeof(int));                        // Baud rate setting
 const int SPLASH_SCREEN_ADDRESS = EEPROM.getAddress(sizeof(int));               // splash screen on/off
 const int ROWS_ADDRESS = EEPROM.getAddress(sizeof(int));                        // number of rows
@@ -214,8 +203,6 @@ void loop() {
     loopCalibrateInc();
   } else if (mode == TEMPERATURE) {
     loopTemperature();
-  } else if (mode == BRIGHTNESS) {
-    loopBrightness();
   } else if (mode == MENU) {
     loopMenu();
   }
@@ -229,11 +216,9 @@ void loop() {
 void factoryReset() {
   memoryReset();
   setupVariables();
-  setBrightness();
 }
 
 void memoryReset() {
-  EEPROM.writeInt(LCD_BACKLIGHT_ADDRESS, 255);               // max brightness
   EEPROM.writeByte(UNIT_ADDRESS, 'i');                       // default to imperial
   EEPROM.writeInt(PITCH_OFFSET_ADDRESS, 0);                  // no pitch offset
   EEPROM.writeInt(ROLL_OFFSET_ADDRESS, 0);                   // no roll offset
@@ -259,7 +244,6 @@ void saveMode() {
 
 // Reads variables from EEPROM and sets their RAM equivalents
 void setupVariables() {
-  brightness = EEPROM.readInt(LCD_BACKLIGHT_ADDRESS);
   unit = EEPROM.readByte(UNIT_ADDRESS);
   pitchOffset = EEPROM.readInt(PITCH_OFFSET_ADDRESS);
   rollOffset = EEPROM.readInt(ROLL_OFFSET_ADDRESS);
@@ -335,11 +319,6 @@ void setupDisplay() {
   lcd.createChar(DEGREE, degree);
   lcd.createChar(FOOT, foot);
   lcd.createChar(PITCH_ARROW, pitchArrow);
-
-  // Set up the backlight
-  pinMode(BACKLIGHT_PIN, OUTPUT);
-  brightness = EEPROM.readInt(LCD_BACKLIGHT_ADDRESS);
-  setBrightness();
 
   // Splash screen
   moveToFirstLine();
@@ -436,15 +415,6 @@ void buttonClick() {
         mode = ALTITUDE;
         startMode();
       }
-    } else if (mode == BRIGHTNESS) { // when in brightness mode, up/down changes brightness, push goes back to menu
-      if (buttonState == UP) {
-        increaseBrightness();
-      } else if (buttonState == DOWN) {
-        decreaseBrightness();
-      } else {
-        saveBrightness();
-        returnToLastMode();
-      }
     } else {                                                 // in most modes up/down goes to menu, push is optional function
       if (buttonState == UP || buttonState == DOWN) {        // Button pressed up or down to go into the menu
         lastMode = mode;
@@ -510,7 +480,7 @@ void loopMenu() {
 }
 
 void loopInclinometer() {
-  if (millis() - millisCounter > 250) {
+  if (millis() - millisCounter > 50) {
 
     moveToFirstLine();
     lcd.print("  Pitch   Roll  ");
@@ -526,7 +496,7 @@ void loopInclinometer() {
 
 
 void loopAltimeter() {
-  if (millis() - millisCounter > 250) {
+  if (millis() - millisCounter > 50) {
 
     moveToFirstLine();
     lcd.print("    Altitude    ");
@@ -539,27 +509,21 @@ void loopAltimeter() {
 
 
 void loopMulti() {
-  if (millis() - millisCounter > 250) {
+  if (millis() - millisCounter > 50) {
 
     moveToFirstLine();
 
     // incline
     int x, y;
     getIncline(x, y, false);
-    // displayIncline(y, x);
 
-    lcd.print(" ");
+    lcd.setCursor(0,0);
+    lcd.write(PITCH_ARROW);
     centerText(String(y), 6, true, char(DEGREE));
     lcd.print("  ");
     centerText(String(x), 6, false, char(DEGREE));
-
-
-    // Draw pitch/roll arrows
-    lcd.setCursor(0,0);
-    lcd.write(PITCH_ARROW);
     lcd.setCursor(14,0);
     lcd.write(LEFT_ARROW);  // left arrow
-    lcd.setCursor(15,0);
     lcd.write(RIGHT_ARROW);  // right arrow
 
     moveToSecondLine();
@@ -593,7 +557,7 @@ void loopTemperature() {
 }
 
 void loopTrack() {
-  if (millis() - millisCounter > 500) {
+  if (millis() - millisCounter > 50) {
     moveToFirstLine();
     lcd.print(" Track Altitude ");
     moveToSecondLine();
@@ -603,7 +567,7 @@ void loopTrack() {
 }
 
 void loopMinMax() {
-  if (millis() - millisCounter > 500) {
+  if (millis() - millisCounter > 50) {
     moveToFirstLine();
     lcd.print("   Min    Max   ");
     moveToSecondLine();
@@ -615,7 +579,7 @@ void loopMinMax() {
 }
 
 void loopCalibrateAlt() {
-  if (millis() - millisCounter > 250) {
+  if (millis() - millisCounter > 50) {
     moveToFirstLine();
     lcd.print("  Set Altitude ");
     lcd.write(UP_ARROW);
@@ -633,7 +597,7 @@ void loopCalibrateAlt() {
 }
 
 void loopCalibrateInc() {
-  if (millis() - millisCounter > 100) {
+  if (millis() - millisCounter > 50) {
     int x, y, z;
     accel.getAcceleration(&x, &y, &z);
 
@@ -664,23 +628,6 @@ void loopCalibrateInc() {
   }
 }
 
-void loopBrightness() {
-  if (millis() - millisCounter > 250) {
-
-    moveToFirstLine();
-    lcd.print("   Brightness   ");
-    moveToSecondLine();
-
-    int unsigned dots = map(brightness, MIN_BRIGHTNESS, MAX_BRIGHTNESS, 1, 16);
-    for (int i=0; i<dots; i++) {
-      lcd.write(BLOCK_CHAR);
-    }
-    for (int i=0; i<16-dots; i++) {
-      lcd.write(" ");
-    }
-    resetCounter();
-  }
-}
 
 
 
@@ -723,35 +670,6 @@ void clearScreen() {
   moveToSecondLine();
   lcd.print("                ");
 }
-
-
-void increaseBrightness() {
-  brightness += BRIGHTNESS_INCREMENT;
-  if (brightness > MAX_BRIGHTNESS) {
-    brightness = MAX_BRIGHTNESS;
-  }
-  setBrightness();
-}
-
-
-void decreaseBrightness() {
-  brightness -= BRIGHTNESS_INCREMENT;
-  if (brightness < MIN_BRIGHTNESS) {
-    brightness = MIN_BRIGHTNESS;
-  }
-  setBrightness();
-}
-
-
-void setBrightness() {
-  analogWrite(BACKLIGHT_PIN, brightness);
-}
-
-
-void saveBrightness() {
-  EEPROM.writeInt(LCD_BACKLIGHT_ADDRESS, brightness);
-}
-
 
 
 //////////////////////////////
