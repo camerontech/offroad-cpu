@@ -57,9 +57,9 @@ int brightness;
 /////////////////////
 // Three-way button
 /////////////////////
-const int UP = 13;
-const int PUSH = 12;
-const int DOWN = 11;
+const int UP = 12;
+const int PUSH = 11;
+const int DOWN = 10;
 
 int lastState = 0;
 int buttonState = 0;
