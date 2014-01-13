@@ -20,6 +20,7 @@ const String menuText[][2] = {{"Incline        ","               "},
                               {"Min/Max        ","Altitude       "},
                               {"Calibrate      ","Altimeter      "},
                               {"Calibrate      ","Inclinometer   "},
+                              {"Set Refresh    ","Rate           "},
                               {"Factory        ","Reset          "}};
 const byte INCLINE = 0;
 const byte ALTITUDE = 1;
@@ -29,9 +30,10 @@ const byte TRACK = 4;
 const byte MINMAX = 5;
 const byte CALIBRATE_ALT = 6;
 const byte CALIBRATE_INC = 7;
-const byte RESET = 8;
-const byte MENU = 9;
-const byte MENU_LENGTH = 9;
+const byte REFRESH = 8;
+const byte RESET = 9;
+const byte MENU = 10;
+const byte MENU_LENGTH = 10;
 
 // Keep track of where we are
 int mode;
@@ -119,6 +121,14 @@ const byte LEFT_ARROW = 127;
 const byte RIGHT_ARROW = 126;
 
 
+
+///////////////////////////
+// Refresh Rates
+///////////////////////////
+const int refreshRates[] = { 50, 250, 500, 1000, 2000, 4000 };
+int refreshRateIndex;
+
+
 ///////////////////////////
 // EEPROM memory addresses
 ///////////////////////////
@@ -144,6 +154,10 @@ const int Y_MIN_ADDRESS = EEPROM.getAddress(sizeof(int));
 const int Y_MAX_ADDRESS = EEPROM.getAddress(sizeof(int));
 const int Z_MIN_ADDRESS = EEPROM.getAddress(sizeof(int));
 const int Z_MAX_ADDRESS = EEPROM.getAddress(sizeof(int));
+
+// refresh rate
+const int REFRESH_RATE_INDEX_ADDRESS = EEPROM.getAddress(sizeof(int));                // refresh rate
+
 
 void setup() {
   // Our current sensor actually accepts 5v now, and there's nothing currently
@@ -194,6 +208,8 @@ void loop() {
     loopCalibrateInc();
   } else if (mode == TEMPERATURE) {
     loopTemperature();
+  } else if (mode == REFRESH) {
+    loopRefresh();
   } else if (mode == MENU) {
     loopMenu();
   }
@@ -224,6 +240,9 @@ void memoryReset() {
   EEPROM.writeInt(Z_MIN_ADDRESS, -277);
   EEPROM.writeInt(Z_MAX_ADDRESS, 262);
 
+  // Refresh rate for updating the display, default to 250ms
+  EEPROM.writeInt(REFRESH_RATE_INDEX_ADDRESS, 1);
+
   // And the current software version
   EEPROM.writeInt(VERSION_ADDRESS, VERSION);
 }
@@ -248,6 +267,8 @@ void setupVariables() {
   yMax = EEPROM.readInt(Y_MAX_ADDRESS);
   zMin = EEPROM.readInt(Z_MIN_ADDRESS);
   zMax = EEPROM.readInt(Z_MAX_ADDRESS);
+
+  refreshRateIndex = EEPROM.readInt(REFRESH_RATE_INDEX_ADDRESS);
 }
 
 void setupDisplay() {
@@ -401,6 +422,14 @@ void buttonClick() {
         mode = ALTITUDE;
         startMode();
       }
+    } else if (mode == REFRESH) {
+      if (buttonState == UP) {
+        incrementRefreshRate();
+      } else if (buttonState == DOWN) {
+        decrementRefreshRate();
+      } else {
+        returnToLastMode();
+      }
     } else {                                                 // in most modes up/down goes to menu, push is optional function
       if (buttonState == UP || buttonState == DOWN) {        // Button pressed up or down to go into the menu
         lastMode = mode;
@@ -466,7 +495,7 @@ void loopMenu() {
 }
 
 void loopInclinometer() {
-  if (millis() - millisCounter > 50) {
+  if (millis() - millisCounter > currentRefreshRate()) {
 
     moveToFirstLine();
     lcd.print(F("  Pitch   Roll  "));
@@ -482,7 +511,7 @@ void loopInclinometer() {
 
 
 void loopAltimeter() {
-  if (millis() - millisCounter > 50) {
+  if (millis() - millisCounter > currentRefreshRate()) {
 
     moveToFirstLine();
     lcd.print(F("    Altitude    "));
@@ -495,7 +524,7 @@ void loopAltimeter() {
 
 
 void loopMulti() {
-  if (millis() - millisCounter > 50) {
+  if (millis() - millisCounter > currentRefreshRate()) {
 
     moveToFirstLine();
 
@@ -523,7 +552,7 @@ void loopMulti() {
 }
 
 void loopTemperature() {
-  if (millis() - millisCounter > 1000) {
+  if (millis() - millisCounter > currentRefreshRate()) {
     String output;
     moveToFirstLine();
     lcd.print(F("  Temperature   "));
@@ -543,7 +572,7 @@ void loopTemperature() {
 }
 
 void loopTrack() {
-  if (millis() - millisCounter > 50) {
+  if (millis() - millisCounter > currentRefreshRate()) {
     moveToFirstLine();
     lcd.print(F(" Track Altitude "));
     moveToSecondLine();
@@ -553,7 +582,7 @@ void loopTrack() {
 }
 
 void loopMinMax() {
-  if (millis() - millisCounter > 50) {
+  if (millis() - millisCounter > currentRefreshRate()) {
     moveToFirstLine();
     lcd.print(F("   Min    Max   "));
     moveToSecondLine();
@@ -565,7 +594,7 @@ void loopMinMax() {
 }
 
 void loopCalibrateAlt() {
-  if (millis() - millisCounter > 50) {
+  if (millis() - millisCounter > 100) {
     moveToFirstLine();
     lcd.print(F("  Set Altitude "));
     lcd.write(UP_ARROW);
@@ -615,6 +644,17 @@ void loopCalibrateInc() {
 }
 
 
+void loopRefresh() {
+  if (millis() - millisCounter > 250) {
+    moveToFirstLine();
+    lcd.print(F("  Refresh Rate  "));
+    moveToSecondLine();
+    String output = String(currentRefreshRate());
+    output += "ms";
+
+    centerText(output, 16, true);
+  }
+}
 
 
 //////////////////////////////
@@ -919,6 +959,31 @@ void saveAltitudeCalibration() {
 
   // Save to EEPROM
   EEPROM.writeFloat(CALIBRATE_ALTITUDE_OFFSET_ADDRESS, calibrateAltitudeOffset);
+}
+
+
+//////////////////////////////
+// Refresh rate
+//////////////////////////////
+
+int currentRefreshRate() {
+  return refreshRates[refreshRateIndex];
+}
+
+void incrementRefreshRate() {
+  refreshRateIndex++;
+  if (refreshRateIndex == (sizeof(refreshRates) / sizeof(int))) {
+    refreshRateIndex = 0;
+  }
+  EEPROM.writeInt(REFRESH_RATE_INDEX_ADDRESS, refreshRateIndex);
+}
+
+void decrementRefreshRate() {
+  refreshRateIndex--;
+  if (refreshRateIndex < 0) {
+    refreshRateIndex = (sizeof(refreshRates) / sizeof(int) - 1);
+  }
+  EEPROM.writeInt(REFRESH_RATE_INDEX_ADDRESS, refreshRateIndex);
 }
 
 
