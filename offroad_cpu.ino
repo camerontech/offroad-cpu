@@ -7,7 +7,7 @@
 #include <HMC5883L.h>
 
 
-const int VERSION = 1;
+const byte VERSION = 1;
 
 unsigned long millisCounter = 0;
 unsigned long minMaxAltitudeMillsCounter = 0;
@@ -20,46 +20,48 @@ const String menuText[][2] = {{"Incline        ","               "},
                               {"Temperature    ","               "},
                               {"Track          ","Altitude       "},
                               {"Min/Max        ","Altitude       "},
-                              {"Calibrate      ","Altitude       "},
+                              {"Calibrate      ","Altimeter      "},
                               {"Calibrate      ","Inclinometer   "},
                               {"Set            ","Brightness     "},
+                              {"Set Refresh    ","Rate           "},
                               {"Factory        ","Reset          "}};
-const int INCLINE = 0;
-const int ALTITUDE = 1;
-const int COMPASS = 2;
-const int MULTI = 3;
-const int TEMPERATURE = 4;
-const int TRACK = 5;
-const int MINMAX = 6;
-const int CALIBRATE_ALT = 7;
-const int CALIBRATE_INC = 8;
-const int BRIGHTNESS = 9;
-const int RESET = 10;
-const int MENU = 11;
-const int MENU_LENGTH = 11;
+const byte INCLINE = 0;
+const byte ALTITUDE = 1;
+const byte COMPASS = 2;
+const byte MULTI = 3;
+const byte TEMPERATURE = 4;
+const byte TRACK = 5;
+const byte MINMAX = 6;
+const byte CALIBRATE_ALT = 7;
+const byte CALIBRATE_INC = 8;
+const byte BRIGHTNESS = 9;
+const byte REFRESH = 10;
+const byte RESET = 11;
+const byte MENU = 12;
+const byte MENU_LENGTH = 12;
 
 // Keep track of where we are
 int mode;
-int8_t displayMenuItem;
+int displayMenuItem;
 int lastMode;
 
 // Display in (m)etric or (i)mperial
 char unit;
 
 // Display character for brightness meter
-const int BLOCK_CHAR = 255;
-const int MAX_BRIGHTNESS = 255;
-const int MIN_BRIGHTNESS = 1;
-const int BRIGHTNESS_INCREMENT = 32;
+const byte BLOCK_CHAR = 255;
+const byte MAX_BRIGHTNESS = 255;
+const byte MIN_BRIGHTNESS = 1;
+const byte BRIGHTNESS_INCREMENT = 32;
 int brightness;
 
 
 /////////////////////
 // Three-way button
 /////////////////////
-const int UP = 12;
-const int PUSH = 11;
-const int DOWN = 10;
+const int UP = 13;
+const int PUSH = 12;
+const int DOWN = 11;
 
 int lastState = 0;
 int buttonState = 0;
@@ -121,22 +123,32 @@ float compassOffset;
 ////////////////////
 
 
-const int RSPin = 0;
-const int RWPin = 1;
-const int ENPin = 4;
-const int D4Pin = 5;
-const int D5Pin = 6;
-const int D6Pin = 7;
-const int D7Pin = 8;
-const int BACKLIGHT_PIN = 9;
+const byte RSPin = 0;
+const byte RWPin = 1;
+const byte ENPin = 4;
+const byte D4Pin = 5;
+const byte D5Pin = 6;
+const byte D6Pin = 7;
+const byte D7Pin = 8;
+const byte BACKLIGHT_PIN = 9;
 
 LiquidCrystal lcd(RSPin, RWPin, ENPin, D4Pin, D5Pin, D6Pin, D7Pin);
 
-byte UP_ARROW = 0;
-byte DOWN_ARROW = 1;
-byte DEGREE = 2;
-byte FOOT = 3;
-byte PITCH_ARROW = 4;
+const byte UP_ARROW = 0;
+const byte DOWN_ARROW = 1;
+const byte DEGREE = 2;
+const byte FOOT = 3;
+const byte PITCH_ARROW = 4;
+const byte LEFT_ARROW = 127;
+const byte RIGHT_ARROW = 126;
+
+
+
+///////////////////////////
+// Refresh Rates
+///////////////////////////
+const int refreshRates[] = { 50, 250, 500, 1000, 2000, 4000 };
+int refreshRateIndex;
 
 
 ///////////////////////////
@@ -166,6 +178,10 @@ const int Y_MIN_ADDRESS = EEPROM.getAddress(sizeof(int));
 const int Y_MAX_ADDRESS = EEPROM.getAddress(sizeof(int));
 const int Z_MIN_ADDRESS = EEPROM.getAddress(sizeof(int));
 const int Z_MAX_ADDRESS = EEPROM.getAddress(sizeof(int));
+
+// refresh rate
+const int REFRESH_RATE_INDEX_ADDRESS = EEPROM.getAddress(sizeof(int));                // refresh rate
+
 
 void setup() {
   // Our current sensor actually accepts 5v now, and there's nothing currently
@@ -221,6 +237,8 @@ void loop() {
     loopTemperature();
   } else if (mode == BRIGHTNESS) {
     loopBrightness();
+  } else if (mode == REFRESH) {
+    loopRefresh();
   } else if (mode == MENU) {
     loopMenu();
   }
@@ -254,6 +272,9 @@ void memoryReset() {
   EEPROM.writeInt(Z_MIN_ADDRESS, -277);
   EEPROM.writeInt(Z_MAX_ADDRESS, 262);
 
+  // Refresh rate for updating the display, default to 250ms
+  EEPROM.writeInt(REFRESH_RATE_INDEX_ADDRESS, 1);
+
   // And the current software version
   EEPROM.writeInt(VERSION_ADDRESS, VERSION);
 }
@@ -280,6 +301,8 @@ void setupVariables() {
   yMax = EEPROM.readInt(Y_MAX_ADDRESS);
   zMin = EEPROM.readInt(Z_MIN_ADDRESS);
   zMax = EEPROM.readInt(Z_MAX_ADDRESS);
+
+  refreshRateIndex = EEPROM.readInt(REFRESH_RATE_INDEX_ADDRESS);
 }
 
 void setupDisplay() {
@@ -350,9 +373,9 @@ void setupDisplay() {
 
   // Splash screen
   moveToFirstLine();
-  lcd.print("  Cameron Tech  ");
+  lcd.print(F("  Cameron Tech  "));
   moveToSecondLine();
-  lcd.print("  Offroad CPU   ");
+  lcd.print(F("  Offroad CPU   "));
   delay(2000);
   clearScreen();
 }
@@ -452,6 +475,14 @@ void buttonClick() {
         saveBrightness();
         returnToLastMode();
       }
+    } else if (mode == REFRESH) {
+      if (buttonState == UP) {
+        incrementRefreshRate();
+      } else if (buttonState == DOWN) {
+        decrementRefreshRate();
+      } else {
+        returnToLastMode();
+      }
     } else {                                                 // in most modes up/down goes to menu, push is optional function
       if (buttonState == UP || buttonState == DOWN) {        // Button pressed up or down to go into the menu
         lastMode = mode;
@@ -519,10 +550,10 @@ void loopMenu() {
 }
 
 void loopInclinometer() {
-  if (millis() - millisCounter > 250) {
+  if (millis() - millisCounter > currentRefreshRate()) {
 
     moveToFirstLine();
-    lcd.print("  Pitch   Roll  ");
+    lcd.print(F("  Pitch   Roll  "));
     moveToSecondLine();
 
     int pitch, roll;
@@ -535,10 +566,10 @@ void loopInclinometer() {
 
 
 void loopAltimeter() {
-  if (millis() - millisCounter > 250) {
+  if (millis() - millisCounter > currentRefreshRate()) {
 
     moveToFirstLine();
-    lcd.print("    Altitude    ");
+    lcd.print(F("    Altitude    "));
     moveToSecondLine();
     outputAltitudeLine(false, NULL);
 
@@ -563,22 +594,28 @@ void loopCompass() {
 }
 
 void loopMulti() {
-  if (millis() - millisCounter > 250) {
+  if (millis() - millisCounter > currentRefreshRate()) {
 
     moveToFirstLine();
 
     // incline
     int x, y;
     getIncline(x, y, false);
-    displayIncline(y, x);
+    // displayIncline(y, x);
+
+    lcd.print(F(" "));
+    centerText(String(y), 6, true, char(DEGREE));
+    lcd.print(F("  "));
+    centerText(String(x), 6, false, char(DEGREE));
+
 
     // Draw pitch/roll arrows
     lcd.setCursor(0,0);
     lcd.write(PITCH_ARROW);
     lcd.setCursor(14,0);
-    lcd.write(127);  // left arrow
+    lcd.write(LEFT_ARROW);  // left arrow
     lcd.setCursor(15,0);
-    lcd.write(126);  // right arrow
+    lcd.write(RIGHT_ARROW);  // right arrow
 
     moveToSecondLine();
 
@@ -596,10 +633,10 @@ void loopMulti() {
 }
 
 void loopTemperature() {
-  if (millis() - millisCounter > 1000) {
+  if (millis() - millisCounter > currentRefreshRate()) {
     String output;
     moveToFirstLine();
-    lcd.print("  Temperature   ");
+    lcd.print(F("  Temperature   "));
     moveToSecondLine();
 
     float temperature = getTemperature();
@@ -616,9 +653,9 @@ void loopTemperature() {
 }
 
 void loopTrack() {
-  if (millis() - millisCounter > 500) {
+  if (millis() - millisCounter > currentRefreshRate()) {
     moveToFirstLine();
-    lcd.print(" Track Altitude ");
+    lcd.print(F(" Track Altitude "));
     moveToSecondLine();
     outputAltitudeLine(true, NULL);
     resetCounter();
@@ -626,9 +663,9 @@ void loopTrack() {
 }
 
 void loopMinMax() {
-  if (millis() - millisCounter > 500) {
+  if (millis() - millisCounter > currentRefreshRate()) {
     moveToFirstLine();
-    lcd.print("   Min    Max   ");
+    lcd.print(F("   Min    Max   "));
     moveToSecondLine();
     centerText(altitudeWithUnit(minAltitude), 8, true);
     centerText(altitudeWithUnit(maxAltitude), 8, false);
@@ -638,9 +675,9 @@ void loopMinMax() {
 }
 
 void loopCalibrateAlt() {
-  if (millis() - millisCounter > 250) {
+  if (millis() - millisCounter > 100) {
     moveToFirstLine();
-    lcd.print("  Set Altitude ");
+    lcd.print(F("  Set Altitude "));
     lcd.write(UP_ARROW);
     moveToSecondLine();
 
@@ -668,19 +705,19 @@ void loopCalibrateInc() {
     if (z > zMaxCal) zMaxCal = z;
 
     moveToFirstLine();
-    lcd.print(" ");
+    lcd.print(F(" "));
     lcd.print(xMinCal);
-    lcd.print(" ");
+    lcd.print(F(" "));
     lcd.print(yMinCal);
-    lcd.print(" ");
+    lcd.print(F(" "));
     lcd.print(zMinCal);
 
     moveToSecondLine();
-    lcd.print("  ");
+    lcd.print(F("  "));
     lcd.print(xMaxCal);
-    lcd.print("  ");
+    lcd.print(F("  "));
     lcd.print(yMaxCal);
-    lcd.print("  ");
+    lcd.print(F("  "));
     lcd.print(zMaxCal);
 
     resetCounter();
@@ -691,7 +728,7 @@ void loopBrightness() {
   if (millis() - millisCounter > 250) {
 
     moveToFirstLine();
-    lcd.print("   Brightness   ");
+    lcd.print(F("   Brightness   "));
     moveToSecondLine();
 
     int unsigned dots = map(brightness, MIN_BRIGHTNESS, MAX_BRIGHTNESS, 1, 16);
@@ -705,7 +742,18 @@ void loopBrightness() {
   }
 }
 
+void loopRefresh() {
+  if (millis() - millisCounter > 250) {
+    moveToFirstLine();
+    lcd.print(F("  Refresh Rate  "));
+    moveToSecondLine();
+    String output = String(currentRefreshRate());
+    output += "ms";
 
+    // centerText(String(refreshRateIndex), 8, true);
+    centerText(output, 16, true);
+  }
+}
 
 
 //////////////////////////////
@@ -742,9 +790,9 @@ void moveToSecondLine() {
 
 void clearScreen() {
   moveToFirstLine();
-  lcd.print("                ");
+  lcd.print(F("                "));
   moveToSecondLine();
-  lcd.print("                ");
+  lcd.print(F("                "));
 }
 
 
@@ -856,10 +904,6 @@ void zeroInclinometer() {
 
 // Writes the current pitch/roll to the screen
 void displayIncline(int first, int second) {
-  // convert int values to strings for output
-  // String firstString = String(first);// + char(DEGREE);
-  // String secondString = String(second);// + char(DEGREE);
-
   centerText(String(first), 8, true, char(DEGREE));
   centerText(String(second), 8, false, char(DEGREE));
 }
@@ -1046,6 +1090,30 @@ void saveAltitudeCalibration() {
 }
 
 
+//////////////////////////////
+// Refresh rate
+//////////////////////////////
+
+int currentRefreshRate() {
+  return refreshRates[refreshRateIndex];
+}
+
+void incrementRefreshRate() {
+  refreshRateIndex++;
+  if (refreshRateIndex == (sizeof(refreshRates) / sizeof(int))) {
+    refreshRateIndex = 0;
+  }
+  EEPROM.writeInt(REFRESH_RATE_INDEX_ADDRESS, refreshRateIndex);
+}
+
+void decrementRefreshRate() {
+  refreshRateIndex--;
+  if (refreshRateIndex < 0) {
+    refreshRateIndex = (sizeof(refreshRates) / sizeof(int) - 1);
+  }
+  EEPROM.writeInt(REFRESH_RATE_INDEX_ADDRESS, refreshRateIndex);
+}
+
 
 ///////////////////////
 // Compass functions
@@ -1172,7 +1240,7 @@ void centerString(String text, int width, bool prependWhiteSpace, char specialCh
   }
 
   for (int i=0; i<left; i++) {
-    lcd.print(" ");
+    lcd.print(F(" "));
   }
 
   lcd.print(text);
@@ -1181,7 +1249,7 @@ void centerString(String text, int width, bool prependWhiteSpace, char specialCh
   }
 
   for (int i=0; i<right; i++) {
-    lcd.print(" ");
+    lcd.print(F(" "));
   }
 }
 
